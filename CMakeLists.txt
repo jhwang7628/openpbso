@@ -9,8 +9,11 @@ option(LIBIGL_WITH_OPENGL_GLFW       "Use GLFW"           ON)
 option(LIBIGL_WITH_VIEWER            "Use OpenGL viewer"  ON)
 
 find_package(LIBIGL REQUIRED QUIET)
+find_package(Portaudio REQUIRED)
 
 # Add your project files
 file(GLOB SRCFILES *.cpp)
-add_executable(${PROJECT_NAME}_bin ${SRCFILES})
-target_link_libraries(${PROJECT_NAME}_bin igl::core igl::opengl_glfw)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+add_executable(simulator tools/simulator.cpp ${SRCFILES})
+target_link_libraries(simulator igl::core igl::opengl_glfw
+    ${PORTAUDIO_LIBRARIES})
