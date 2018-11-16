@@ -10,6 +10,8 @@
 #include "modal_integrator.h"
 ////////////////////////////////////////////////////////////////////////////////
 static bool PA_STREAM_STARTED = false;
+static int SAMPLE_RATE = 44100.;
+static int FORCE_DURATION = 50;
 ////////////////////////////////////////////////////////////////////////////////
 #define CHECK_PA_LAUNCH(x) \
     { \
@@ -26,6 +28,12 @@ cli::Parser *CreateParser(int argc, char **argv) {
         "surface modes file");
     parser->set_required<std::string>("t", "material",
         "modal material file");
+    parser->set_optional<unsigned int>("n", "offline_samples", 0,
+        "number of offline samples we take");
+    parser->set_optional<std::string>("o", "output_file", "training_set.dat",
+        "output file for the offline samples");
+    parser->set_optional<float>("l", "offline_samples_sec", 1,
+        "number of seconds to run each offline sample for");
     parser->run_and_exit_if_error();
     return parser;
 }
@@ -84,7 +92,7 @@ int PaModalCallback(const void *inputBuffer,
 
     for( i=0; i<framesPerBuffer; i++ ) {
         const Eigen::VectorXd &q = data->integrator->Step(data->F);
-        if (data->counter == 50) // only set once
+        if (data->counter == FORCE_DURATION) // only set once
             data->F.setZero();
         const float qsum = (float)q.sum()*data->volume;
         *out++ = qsum;
@@ -105,14 +113,14 @@ void TestPortAudio(const ModalMaterial &material, ModeData *modes) {
         modes->_omegaSquared,
         material.alpha,
         material.beta,
-        1./44100.);
+        1./(double)SAMPLE_RATE);
     data.F.setOnes(modes->numModes());
     PaStream *stream;
     CHECK_PA_LAUNCH(Pa_OpenDefaultStream(&stream,
                          0,          /* no input channels */
                          2,          /* stereo output */
                          paFloat32,  /* 32 bit floating point output */
-                         44100,
+                         SAMPLE_RATE,
                          256,        /* frames per buffer, i.e. the number
                                         of sample frames that PortAudio will
                                         request from the callback. Many apps
@@ -145,7 +153,7 @@ void TestModalIntegrator(const ModalMaterial &material, const ModeData &modes) {
     for (int ii=0; ii<5000; ++ii) {
         if (ii==1)
             Q.setZero();
-        const Eigen::VectorXd q = integrator->Step(Q);
+        const Eigen::VectorXd &q = integrator->Step(Q);
         std::cout << "q " << ii << " " << q.transpose() << std::endl;
     }
 }
@@ -165,6 +173,63 @@ int main(int argc, char **argv) {
     ModeData modes;
     modes.read(parser->get<std::string>("s").c_str());
 
+
+    if (parser->get<unsigned int>("n") > 0) {
+        // offline sample mode
+        std::string outfile = parser->get<std::string>("o");
+        float secs = parser->get<float>("l");
+        int N_samples = (int)parser->get<unsigned int>("n");
+        int N_steps = (int)std::ceil(secs*SAMPLE_RATE);
+        PaModalData sim;
+        sim.modes = &modes;
+        sim.F.setZero(modes.numModes());
+        std::ofstream stream(outfile, std::ios::binary);
+        stream.write((char*)&N_samples, sizeof(int));
+        stream.write((char*)&N_steps, sizeof(int));
+        float qsum;
+        int vid;
+        Eigen::Vector3d vn;
+        for (int sample=0; sample<N_samples; ++sample) {
+            sim.integrator = ModalIntegrator<double>::Build(
+                material->density,
+                modes._omegaSquared,
+                material->alpha,
+                material->beta,
+                1./(double)SAMPLE_RATE);
+
+            vid = rand() % (modes.numDOF()/3);
+            vn = VN.row(vid).normalized()*sim.hitStrength;
+            for (int mm=0; mm<modes.numModes(); ++mm) {
+                sim.F(mm) = vn[0]*modes.mode(mm).at(vid*3+0)
+                          + vn[1]*modes.mode(mm).at(vid*3+1)
+                          + vn[2]*modes.mode(mm).at(vid*3+2);
+            }
+
+            stream.write((char*)&vid, sizeof(int));
+            std::cout << sample << " => " << vid << " ";
+            for (int step=0; step<N_steps; ++step) {
+                const Eigen::VectorXd &q = sim.integrator->Step(sim.F);
+                if (step == FORCE_DURATION)
+                    sim.F.setZero();
+                qsum = (float)q.sum()*sim.volume;
+                if (step < 5 || step > N_steps-5) {
+                    std::cout << qsum << " ";
+                }
+                else if (step == 10) {
+                    std::cout << " ... ";
+                }
+                stream.write((char*)&qsum, sizeof(float));
+            }
+            std::cout << std::endl;
+            delete sim.integrator;
+            sim.integrator = nullptr;
+        }
+        return 0;
+    }
+
+
+
+
     // setup audio callback stuff
     CHECK_PA_LAUNCH(Pa_Initialize());
     PaModalData paData;
@@ -174,7 +239,7 @@ int main(int argc, char **argv) {
         modes._omegaSquared,
         material->alpha,
         material->beta,
-        1./44100.);
+        1./(double)SAMPLE_RATE);
     paData.F.setOnes(modes.numModes());
     paData.Fbuf.setZero(modes.numModes());
     PaStream *stream;
@@ -182,7 +247,7 @@ int main(int argc, char **argv) {
                          0,          /* no input channels */
                          2,          /* stereo output */
                          paFloat32,  /* 32 bit floating point output */
-                         44100,
+                         SAMPLE_RATE,
                          256,        /* frames per buffer, i.e. the number
                                         of sample frames that PortAudio will
                                         request from the callback. Many apps

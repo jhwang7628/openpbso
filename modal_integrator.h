@@ -84,9 +84,6 @@ ModalIntegrator<T>::ModalIntegrator(const int N, const T h,
         _c3(ii) /= ((T)3*omega*omega_d);
         _c3(ii) *= 1E9; // arbitrary scaling
     }
-    std::cout << "c1 = " << _c1.transpose() << std::endl;
-    std::cout << "c2 = " << _c2.transpose() << std::endl;
-    std::cout << "c3 = " << _c3.transpose() << std::endl;
 }
 
 
