@@ -86,7 +86,6 @@ ModalIntegrator<T>::ModalIntegrator(const int N, const T h,
     }
 }
 
-
 template<typename T>
 const typename ModalIntegrator<T>::ModalVec &ModalIntegrator<T>::Step(const ModalVec &Q) {
     ModalVec &q_k         = _q.at((_q_curr_ptr+1)%3);
