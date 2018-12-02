@@ -2,6 +2,7 @@
 import numpy as np
 import struct,sys,copy,subprocess,datetime,os
 import scipy.io.wavfile
+import matplotlib.pyplot as plt
 
 MODAL_CLASSIFY_ROOT = '/Users/jui-hsien/code/modal_classify/'
 SIMULATOR = MODAL_CLASSIFY_ROOT + 'build/simulator'
@@ -19,7 +20,6 @@ def CheckFilesExist(files):
         if not os.path.isfile(f):
             return False
     return True
-
 
 class SimParameters:
     def __init__(self, file_material, file_out, N_samples, sample_secs, dir_out):
@@ -57,7 +57,7 @@ def Read_Training_Set(filename, N=-1):
 def Write_Wavs(alldata, outdir):
     norm = -1.
     for data in alldata:
-        norm = max(abs(data[1]))
+        norm = max(norm, max(abs(data[1])))
     filenames = []
     for data in alldata:
         d = np.asarray(data[1]/norm*32767, dtype=np.int16)
@@ -92,4 +92,10 @@ def LoadFeatures(filename, use_subset=None):
 
 if __name__ == '__main__':
     data = Read_Training_Set(sys.argv[1], N=100)
+    plt.figure()
+    for d in data:
+        plt.plot(d[1], label=d[0])
+    plt.legend()
+    plt.show()
+
     Write_Wavs(data, 'output')
