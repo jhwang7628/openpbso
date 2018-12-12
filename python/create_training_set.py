@@ -6,9 +6,9 @@ import glob,os
 MATERIALS_ROOT = '/Users/jui-hsien/code/modal_classify/data/materials/'
 OBJECTS_ROOT = '/Users/jui-hsien/code/modal_classify/data/objects/'
 
-out = 'dataset2'
+out = 'dataset3'
 out_prefix = 'training-set'
-obj = 'A'
+obj = 'ruler'
 sample_secs = 1.
 N_samples = 1000
 materials = ['ceramics', 'glass', 'steel', 'wood', 'abs', 'polycarbonate']
@@ -46,8 +46,14 @@ for sim in sim_parameters:
     RunCmd('mkdir -p %s' %(sim.dir_out), exe=True)
     data = Read_Training_Set(sim.file_out)
     sim.file_features = sim.file_out.replace('.dat', '.features')
+    sim.file_vids = sim.file_out.replace('.dat', '.vids')
     print '  computing features for : {}'.format(sim.file_features)
     if not os.path.isfile(sim.file_features):
         wavfile_list = Write_Wavs(data, sim.dir_out)
         features = ComputeFeatures(wavfile_list, feature_extractor)
         SaveFeatures(features, sim.file_features, overwrite=overwrite)
+    if not os.path.isfile(sim.file_vids):
+        with open(sim.file_vids, 'w') as stream:
+            for d in data:
+                stream.write('%u\n' %d[0])
+

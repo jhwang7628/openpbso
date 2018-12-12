@@ -1,13 +1,7 @@
-# libigl example project
+# Modal Classification
 
-A blank project example showing how to use libigl and cmake. Feel free and
-encouraged to copy or fork this project as a way of starting a new personal
-project using libigl.
-
-## See the tutorial first
-
-Then build, run and understand the [libigl
-tutorial](http://libigl.github.io/libigl/tutorial/).
+This is a CS221 class project at Stanford, which aims at jointing classifying
+object shape and material from input modal sound.
 
 ## Compile
 
@@ -18,20 +12,23 @@ Compile this project using the standard cmake routine:
     cmake ..
     make
 
-This should find and build the dependencies and create a `example_bin` binary.
+This should find and build the dependencies and create a `simulator` binary.
 
 ## Run
 
 From within the `build` directory just issue:
 
-    ./example_bin
+    ./simulator -m <mesh> -s <surface_mode> -t <material> [-n <num_offline_samples>] [-o <offline_samples_output>] [-l <offline_samples_sec]
 
-A glfw app should launch displaying a 3D cube.
+If no optional arguments, a glfw app should launch displaying the mesh with
+interactive sound demo. Shift+left click to sample the sound from the vertex
+under mouse cursor.
 
 ## Dependencies
 
-The only dependencies are stl, eigen, [libigl](http://libigl.github.io/libigl/) and
-the dependencies of the `igl::opengl::glfw::Viewer`.
+The dependencies are stl, eigen, [libigl](http://libigl.github.io/libigl/) and
+the dependencies of the `igl::opengl::glfw::Viewer`, and
+[PortAudio](http://www.portaudio.com/) for sound.
 
 We recommend you to install libigl using git via:
 

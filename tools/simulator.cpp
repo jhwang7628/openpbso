@@ -7,6 +7,7 @@
 #include "ModeData.h"
 #include "cmd_parser.h"
 #include "portaudio.h"
+#include <set>
 #include "modal_integrator.h"
 ////////////////////////////////////////////////////////////////////////////////
 static bool PA_STREAM_STARTED = false;
@@ -188,6 +189,7 @@ int main(int argc, char **argv) {
         stream.write((char*)&N_steps, sizeof(int));
         float qsum;
         int vid;
+        std::set<int> sampled_vids;
         Eigen::Vector3d vn;
         for (int sample=0; sample<N_samples; ++sample) {
             sim.integrator = ModalIntegrator<double>::Build(
@@ -196,8 +198,10 @@ int main(int argc, char **argv) {
                 material->alpha,
                 material->beta,
                 1./(double)SAMPLE_RATE);
-
-            vid = rand() % (modes.numDOF()/3);
+            while(sampled_vids.find(vid) != sampled_vids.end()) {
+                vid = rand() % (modes.numDOF()/3);
+            }
+            sampled_vids.insert(vid);
             vn = VN.row(vid).normalized()*sim.hitStrength;
             for (int mm=0; mm<modes.numModes(); ++mm) {
                 sim.F(mm) = vn[0]*modes.mode(mm).at(vid*3+0)

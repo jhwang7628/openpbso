@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import numpy as np
+import glob
 import struct,sys,copy,subprocess,datetime,os
 import scipy.io.wavfile
 import matplotlib.pyplot as plt
@@ -30,6 +31,7 @@ class SimParameters:
         self.dir_out = dir_out
 
         self.file_features = None
+        self.file_vids = None
 
 def Run_Sims(file_obj, file_modes, list_sim_parameters, overwrite=False):
     """ Create a training set consists of different materials """
@@ -73,12 +75,33 @@ def ComputeFeatures(wavfile_list, feature_extractor):
         features.append(features_i)
     return np.array(features)
 
+def BinaryFilename(f, extension=False):
+    if extension:
+        return f + '_bin.npy'
+    else:
+        return f + '_bin'
+
 def SaveFeatures(features, outfile, overwrite=False):
     if not os.path.isfile(outfile) or overwrite:
         np.savetxt(outfile, features)
 
-def LoadFeatures(filename, use_subset=None):
-    features = np.loadtxt(filename)
+def LoadFeatures(filename, use_subset=None, remove_nan_data=True, binary=False):
+    if binary:
+        features = np.load(filename)
+    else:
+        features = np.loadtxt(filename)
+    if remove_nan_data:
+        nanfound = False
+        delete_rows = []
+        for ii in range(features.shape[0]):
+            nanfoundrow = False
+            if sum([int(x) for x in np.isnan(features[ii,:])]) > 0:
+                nanfoundrow = True
+                nanfound = True
+            if nanfoundrow:
+                delete_rows.append(ii)
+        if nanfound:
+            features = np.delete(features, delete_rows, 0)
     if use_subset is not None:
         N_features_type = 34
         assert(features.shape[1] % N_features_type == 0)
@@ -90,12 +113,19 @@ def LoadFeatures(filename, use_subset=None):
         features = features[:, cols]
     return features
 
-if __name__ == '__main__':
-    data = Read_Training_Set(sys.argv[1], N=100)
-    plt.figure()
-    for d in data:
-        plt.plot(d[1], label=d[0])
-    plt.legend()
-    plt.show()
+def ConvertFeaturesBinary(filename, filename_bin):
+    features = np.loadtxt(filename)
+    np.save(filename_bin, features)
 
-    Write_Wavs(data, 'output')
+def TestLoadFeatures():
+    filenames = glob.glob('*features_bin.npy')
+    for f in filenames:
+        features = LoadFeatures(f, binary=True)
+        print features.shape
+        break
+
+if __name__ == '__main__':
+    # data = Read_Training_Set(sys.argv[1], N=100)
+    # Write_Wavs(data, 'output')
+
+    TestLoadFeatures()
