@@ -75,7 +75,7 @@ struct PaModalData {
     ModeData *modes;
     Eigen::VectorXd F;
     Eigen::VectorXd Fbuf;
-    float volume = 0.0001f;
+    float volume = 0.01f;
     int counter = 0;
     double hitStrength = 1.0;
 };
@@ -103,7 +103,35 @@ int PaModalCallback(const void *inputBuffer,
     return 0;
 }
 ////////////////////////////////////////////////////////////////////////////////
-void TestPortAudio(const ModalMaterial &material, ModeData *modes) {
+void TestPortAudio() {
+    CHECK_PA_LAUNCH(Pa_Initialize());
+    //PaTestData data;
+    PaTestData data;
+    //const double dt = 1./sqrt(modes->omegaSquared(modes->numModes()-1)/material.density)/8.;
+    PaStream *stream;
+    CHECK_PA_LAUNCH(Pa_OpenDefaultStream(&stream,
+                         0,          /* no input channels */
+                         2,          /* stereo output */
+                         paFloat32,  /* 32 bit floating point output */
+                         SAMPLE_RATE,
+                         256,        /* frames per buffer, i.e. the number
+                                        of sample frames that PortAudio will
+                                        request from the callback. Many apps
+                                        may want to use
+                                        paFramesPerBufferUnspecified, which
+                                        tells PortAudio to pick the best,
+                                        possibly changing, buffer size.*/
+                         patestCallback, /* this is your callback function */
+                         &data )); /*This is a pointer that will be passed to
+                                    your callback*/
+    CHECK_PA_LAUNCH(Pa_StartStream(stream));
+    Pa_Sleep(5*1000);
+    CHECK_PA_LAUNCH(Pa_StopStream(stream));
+    CHECK_PA_LAUNCH(Pa_CloseStream(stream));
+    CHECK_PA_LAUNCH(Pa_Terminate());
+}
+////////////////////////////////////////////////////////////////////////////////
+void TestPortAudioMode(const ModalMaterial &material, ModeData *modes) {
     CHECK_PA_LAUNCH(Pa_Initialize());
     //PaTestData data;
     PaModalData data;
@@ -160,7 +188,10 @@ void TestModalIntegrator(const ModalMaterial &material, const ModeData &modes) {
 }
 ////////////////////////////////////////////////////////////////////////////////
 int main(int argc, char **argv) {
-
+    // FIXME debug START
+    TestPortAudio();
+    return 0;
+    // FIXME debug STOP
     auto *parser = CreateParser(argc, argv);
 
     Eigen::MatrixXd V, C, VN;
@@ -230,9 +261,6 @@ int main(int argc, char **argv) {
         }
         return 0;
     }
-
-
-
 
     // setup audio callback stuff
     CHECK_PA_LAUNCH(Pa_Initialize());
