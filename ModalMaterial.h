@@ -3,15 +3,14 @@
 #include <fstream>
 #include <sstream>
 #include "config.h"
-
 //##############################################################################
 // This struct stores and computes all the material paramters needed for modal
 // analysis. The naming convention follows DyRT paper [James 2002]. In
 // particular, IIR filter equation is useful to time-step the modal equations.
 // (eq. 11, 19).
 //##############################################################################
-struct ModalMaterial
-{
+template<typename REAL>
+struct ModalMaterial {
     std::string name;
     REAL alpha;
     REAL beta;
@@ -21,9 +20,9 @@ struct ModalMaterial
 
     // cached fields
     REAL inverseDensity;
-    inline REAL xi(const REAL &omega_i)
+    inline REAL xi(const REAL &omega_i) const
     {return 0.5*(alpha/omega_i + beta*omega_i);} // eq.10, xi = [0,1]
-    inline REAL omega_di(const REAL &omega_i)
+    inline REAL omega_di(const REAL &omega_i) const
     {return omega_i*sqrt(1.0 - pow(xi(omega_i),2));} // eq.12.
 
     static ModalMaterial *Read(const char *filename) {
@@ -48,5 +47,4 @@ struct ModalMaterial
         return material;
     }
 };
-
 #endif

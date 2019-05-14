@@ -33,6 +33,7 @@ class ModalIntegrator {
                                          const std::vector<T> omegaSquared,
                                          const T alpha, const T beta, const T h);
         const ModalVec &Step(const ModalVec &Q);
+        const ModalVec &Step();
 };
 
 template<typename T>
@@ -92,6 +93,16 @@ const typename ModalIntegrator<T>::ModalVec &ModalIntegrator<T>::Step(const Moda
     const ModalVec &q_km1 = _q.at((_q_curr_ptr  )%3);
     const ModalVec &q_km2 = _q.at((_q_curr_ptr+2)%3);
     q_k = _c1.cwiseProduct(q_km1) + _c2.cwiseProduct(q_km2) + _c3.cwiseProduct(Q);
+    _q_curr_ptr = (_q_curr_ptr + 1)%3;
+    return q_k;
+}
+
+template<typename T>
+const typename ModalIntegrator<T>::ModalVec &ModalIntegrator<T>::Step() {
+    ModalVec &q_k         = _q.at((_q_curr_ptr+1)%3);
+    const ModalVec &q_km1 = _q.at((_q_curr_ptr  )%3);
+    const ModalVec &q_km2 = _q.at((_q_curr_ptr+2)%3);
+    q_k = _c1.cwiseProduct(q_km1) + _c2.cwiseProduct(q_km2);
     _q_curr_ptr = (_q_curr_ptr + 1)%3;
     return q_k;
 }
