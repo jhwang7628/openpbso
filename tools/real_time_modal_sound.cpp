@@ -1,6 +1,7 @@
 #include <set>
 #include <ctime>
 #include <thread>
+#include <pthread.h>
 #include <string>
 #include "igl/opengl/glfw/Viewer.h"
 #include "igl/read_triangle_mesh.h"
@@ -53,12 +54,19 @@ int PaModalCallback(const void *inputBuffer,
     (void) inputBuffer; /* Prevent unused variable warning. */
     bool success = data->solver->dequeueSoundMessage(data->soundMessage);
     for( i=0; i<framesPerBuffer; i++ ) {
-        *out++ = (float)(data->soundMessage.data(i)) / 300.;
-        *out++ = (float)(data->soundMessage.data(i)) / 300.;
+        *out++ = (float)(data->soundMessage.data(i)/300.);
+        *out++ = (float)(data->soundMessage.data(i)/300.);
     }
     data->writeStream << data->soundMessage.data << std::endl;
     return 0;
 }
+template<typename T>
+void StepSolver(ModalSolver<T> &solver) {
+    while (true) {
+        solver.step();
+    }
+}
+//##############################################################################
 //##############################################################################
 int main(int argc, char **argv) {
     auto *parser = CreateParser(argc, argv);
@@ -85,11 +93,16 @@ int main(int argc, char **argv) {
         1./(double)SAMPLE_RATE);
     ModalSolver<double> solver(modes.numModes());
     solver.setIntegrator(integrator);
+
+    // start a simulation thread and use max priority
     std::thread threadSim([&solver](){
         while (true) {
             solver.step();
         }
     });
+    sched_param sch_params;
+    sch_params.sched_priority = sched_get_priority_max(SCHED_FIFO);
+    pthread_setschedparam(threadSim.native_handle(), SCHED_FIFO, &sch_params);
 
     // setup audio callback stuff
     CHECK_PA_LAUNCH(Pa_Initialize());
