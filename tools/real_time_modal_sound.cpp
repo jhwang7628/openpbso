@@ -3,10 +3,13 @@
 #include <thread>
 #include <pthread.h>
 #include <string>
-#include "igl/opengl/glfw/Viewer.h"
 #include "igl/read_triangle_mesh.h"
 #include "igl/unproject_onto_mesh.h"
 #include "igl/per_vertex_normals.h"
+#include "igl/opengl/glfw/Viewer.h"
+#include "igl/opengl/glfw/imgui/ImGuiMenu.h"
+#include "igl/opengl/glfw/imgui/ImGuiHelpers.h"
+#include "imgui/imgui.h"
 #include "config.h"
 #include "ModalMaterial.h"
 #include "ModeData.h"
@@ -161,6 +164,57 @@ int main(int argc, char **argv) {
             }
             return false;
         };
+
+    igl::opengl::glfw::imgui::ImGuiMenu menu;
+    viewer.plugins.push_back(&menu);
+    menu.callback_draw_viewer_menu = [&]()
+    {
+        // viewer menu
+        menu.draw_viewer_menu();
+
+        // simulation menu
+        ImGui::SetNextWindowPos(ImVec2(200,0));
+        ImGui::SetNextWindowSize(ImVec2(200,500));
+        ImGui::Begin("Simulation");
+        auto extractLast = [](const std::string str, const std::string delim) {
+            return str.substr(str.rfind(delim)+1);
+        };
+        if (ImGui::CollapsingHeader("Info", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::TreeNode("Geometry")) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f,0.8f,0.8f,1.0f));
+                ImGui::Columns(2, "mycolumns2", false);
+                ImGui::Text("Mesh"); ImGui::NextColumn();
+                ImGui::Text("%s", extractLast(parser->get<std::string>("m"), "/").c_str()); ImGui::NextColumn();
+                ImGui::Text("#Vertices"); ImGui::NextColumn();
+                ImGui::Text("%d", (int)V.rows()); ImGui::NextColumn();
+                ImGui::Text("#Triangles"); ImGui::NextColumn();
+                ImGui::Text("%d", (int)F.rows()); ImGui::NextColumn();
+                ImGui::Columns(1);
+                ImGui::TreePop();
+                ImGui::PopStyleColor();
+            }
+            if (ImGui::TreeNode("Modal Model")) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f,0.8f,0.8f,1.0f));
+                ImGui::Columns(2, "mycolumns2", false);
+                ImGui::Text("Material file"); ImGui::NextColumn();
+                ImGui::Text("%s", extractLast(parser->get<std::string>("t"), "/").c_str()); ImGui::NextColumn();
+                ImGui::Text("Density"); ImGui::NextColumn();
+                ImGui::Text("%.2f", material->density); ImGui::NextColumn();
+                ImGui::Text("Young's"); ImGui::NextColumn();
+                ImGui::Text("%.2e", material->youngsModulus); ImGui::NextColumn();
+                ImGui::Text("Poisson ratio"); ImGui::NextColumn();
+                ImGui::Text("%.2f", material->poissonRatio); ImGui::NextColumn();
+                ImGui::Text("alpha"); ImGui::NextColumn();
+                ImGui::Text("%.2f", material->alpha); ImGui::NextColumn();
+                ImGui::Text("beta"); ImGui::NextColumn();
+                ImGui::Text("%.2f", material->beta); ImGui::NextColumn();
+                ImGui::Columns(1);
+                ImGui::TreePop();
+                ImGui::PopStyleColor();
+            }
+        }
+        ImGui::End();
+    };
 
     viewer.data().set_mesh(V, F);
     viewer.data().set_colors(C);
