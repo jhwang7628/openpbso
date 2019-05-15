@@ -180,6 +180,13 @@ int main(int argc, char **argv) {
             return str.substr(str.rfind(delim)+1);
         };
         if (ImGui::CollapsingHeader("Info", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Button("Unfold All")) {
+                std::cout << "unfold all\n";
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Fold All")) {
+                std::cout << "fold all\n";
+            }
             if (ImGui::TreeNode("Geometry")) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f,0.8f,0.8f,1.0f));
                 ImGui::Columns(2, "mycolumns2", false);
