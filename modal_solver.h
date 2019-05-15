@@ -18,14 +18,25 @@ struct SoundMessage {
     Eigen::Matrix<T,BUF_SIZE,1> data;
 };
 //##############################################################################
+template<typename T>
+struct TransMessage {
+    Eigen::Matrix<T,-1,1> data;
+    explicit TransMessage() = default;
+    explicit TransMessage(const int N) {
+        data.setOnes(N);
+    }
+};
+//##############################################################################
 template<typename T, int BUF_SIZE=FRAMES_PER_BUFFER>
 class ModalSolver {
 private:
     typedef moodycamel::ReaderWriterQueue<T> Queue;
     moodycamel::ReaderWriterQueue<ForceMessage<T, BUF_SIZE>> _queue_force;
     moodycamel::ReaderWriterQueue<SoundMessage<T, BUF_SIZE>> _queue_sound;
+    moodycamel::ReaderWriterQueue<TransMessage<T>>           _queue_trans;
     SoundMessage<T, BUF_SIZE> _mess_sound;
     ForceMessage<T, BUF_SIZE> _mess_force;
+    TransMessage<T>           _mess_trans;
     ModalIntegrator<T> *_integrator = nullptr;
     const int _N_modes;
 public:
@@ -39,12 +50,13 @@ public:
     inline ForceMessage<T, BUF_SIZE> &getForceMessage()
     {return _mess_force;}
 
-
     void step();
     bool enqueueForceMessage(const ForceMessage<T, BUF_SIZE> &mess);
     bool dequeueForceMessage(ForceMessage<T, BUF_SIZE> &mess);
     bool enqueueSoundMessage(const SoundMessage<T, BUF_SIZE> &mess);
     bool dequeueSoundMessage(SoundMessage<T, BUF_SIZE> &mess);
+    bool enqueueTransMessage(const TransMessage<T> &mess);
+    bool dequeueTransMessage(TransMessage<T> &mess);
 };
 //##############################################################################
 template<typename T, int BUF_SIZE>
@@ -104,6 +116,18 @@ bool ModalSolver<T, BUF_SIZE>::enqueueSoundMessage(
 template<typename T, int BUF_SIZE>
 bool ModalSolver<T, BUF_SIZE>::dequeueSoundMessage(
     SoundMessage<T, BUF_SIZE> &mess) {
+    return _queue_sound.try_dequeue(mess);
+}
+//##############################################################################
+template<typename T, int BUF_SIZE>
+bool ModalSolver<T, BUF_SIZE>::enqueueTransMessage(
+    const TransMessage<T> &mess){
+    return _queue_sound.try_enqueue(mess);
+}
+//##############################################################################
+template<typename T, int BUF_SIZE>
+bool ModalSolver<T, BUF_SIZE>::dequeueTransMessage(
+    TransMessage<T> &mess) {
     return _queue_sound.try_dequeue(mess);
 }
 //##############################################################################

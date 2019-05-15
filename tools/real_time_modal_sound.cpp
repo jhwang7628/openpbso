@@ -42,6 +42,7 @@ cli::Parser *CreateParser(int argc, char **argv) {
 struct PaModalData {
     ModalSolver<double> *solver;
     SoundMessage<double> soundMessage;
+    TransMessage<double> transMessage;
     std::ofstream writeStream;
 };
 int PaModalCallback(const void *inputBuffer,
@@ -112,6 +113,7 @@ int main(int argc, char **argv) {
     PaModalData paData;
     paData.writeStream.open("write.txt");
     paData.solver = &solver;
+    paData.transMessage = TransMessage<double>(modes.numModes()); // TODO use actual transfer message
     PaStream *stream;
     CHECK_PA_LAUNCH(Pa_OpenDefaultStream(&stream,
         0,                 /* no input channels */
@@ -200,7 +202,7 @@ int main(int argc, char **argv) {
                 ImGui::TreePop();
                 ImGui::PopStyleColor();
             }
-            if (ImGui::TreeNode("Modal Model")) {
+            if (ImGui::TreeNode("Modal Info")) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f,0.8f,0.8f,1.0f));
                 ImGui::Columns(2, "mycolumns2", false);
                 ImGui::Text("Material file"); ImGui::NextColumn();
@@ -220,6 +222,32 @@ int main(int argc, char **argv) {
                 ImGui::PopStyleColor();
             }
         }
+		if (ImGui::CollapsingHeader("Sound Model")) {
+            static bool animate = true;
+            static float arr[] = { 0.6f, 0.1f, 1.0f, 0.5f, 0.92f, 0.1f, 0.2f };
+            static float values[90] = { 0 };
+            static int values_offset = 0;
+            static double refresh_time = 0.0;
+            if (!animate || refresh_time == 0.0f)
+                refresh_time = ImGui::GetTime();
+            while (refresh_time < ImGui::GetTime()) // Create dummy data at fixed 60 hz rate for the demo
+            {
+                static float phase = 0.0f;
+                values[values_offset] = cosf(phase);
+                values_offset = (values_offset+1) % IM_ARRAYSIZE(values);
+                phase += 0.10f*values_offset;
+                refresh_time += 1.0f/60.0f;
+            }
+            ImGui::PlotLines("Lines", values, IM_ARRAYSIZE(values), values_offset, "avg 0.0", -1.0f, 1.0f, ImVec2(0,80));
+            // FIXME debug START // TODO
+            Eigen::Matrix<float,-1,1> hist = paData.transMessage.data.cast<float>();
+            const int N_modes = paData.transMessage.data.size();
+            for (int ii=0; ii<hist.size(); ++ii) {
+                hist(ii) = 0.9*std::abs(cos(ii*0.5f) + 0.2*cos(ii*0.3f+2.));
+            }
+            std::cout << hist << std::endl;
+            ImGui::PlotHistogram("Transfer", hist.data(), paData.transMessage.data.size(), 0, NULL, 0.0f, 1.0f, ImVec2(0,80));
+		}
         ImGui::End();
     };
 
