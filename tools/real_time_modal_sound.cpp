@@ -35,6 +35,8 @@ cli::Parser *CreateParser(int argc, char **argv) {
         "surface modes file");
     parser->set_required<std::string>("t", "material",
         "modal material file");
+    parser->set_optional<std::string>("p", "ffat_map", FILE_NOT_EXIST,
+        "ffat map folder that contains *.fatcube files");
     parser->run_and_exit_if_error();
     return parser;
 }
@@ -43,7 +45,6 @@ struct PaModalData {
     ModalSolver<double> *solver;
     SoundMessage<double> soundMessage;
     TransMessage<double> transMessage;
-    std::ofstream writeStream;
 };
 int PaModalCallback(const void *inputBuffer,
                     void *outputBuffer,
@@ -61,7 +62,6 @@ int PaModalCallback(const void *inputBuffer,
         *out++ = (float)(data->soundMessage.data(i)/300.);
         *out++ = (float)(data->soundMessage.data(i)/300.);
     }
-    data->writeStream << data->soundMessage.data << std::endl;
     return 0;
 }
 template<typename T>
@@ -95,7 +95,21 @@ int main(int argc, char **argv) {
         material->alpha,
         material->beta,
         1./(double)SAMPLE_RATE);
-    ModalSolver<double> solver(modes.numModes());
+    int N_modesAudible = modes.numModes();
+    if (parser->get<std::string>("p") != FILE_NOT_EXIST) {
+        std::string maxFreqFile =
+            parser->get<std::string>("p") + "/freq_threshold.txt";
+        std::ifstream stream(maxFreqFile.c_str());
+        assert(stream &&
+            "freq_threshold.txt does not exist in the ffat folder");
+        std::string line;
+        std::getline(stream, line);
+        std::istringstream iss(line);
+        double maxFreq;
+        iss >> maxFreq;
+        N_modesAudible = modes.numModesAudible(material->density, maxFreq);
+    }
+    ModalSolver<double> solver(N_modesAudible);
     solver.setIntegrator(integrator);
 
     // start a simulation thread and use max priority
@@ -108,12 +122,17 @@ int main(int argc, char **argv) {
     sch_params.sched_priority = sched_get_priority_max(SCHED_FIFO);
     pthread_setschedparam(threadSim.native_handle(), SCHED_FIFO, &sch_params);
 
+    // read transfer files if exist
+    if (parser->get<std::string>("p") != FILE_NOT_EXIST) {
+        solver.readFFATMaps(parser->get<std::string>("p"));
+    }
+
     // setup audio callback stuff
     CHECK_PA_LAUNCH(Pa_Initialize());
     PaModalData paData;
-    paData.writeStream.open("write.txt");
     paData.solver = &solver;
-    paData.transMessage = TransMessage<double>(modes.numModes()); // TODO use actual transfer message
+    paData.transMessage =
+        TransMessage<double>(N_modesAudible); // TODO use actual transfer message
     PaStream *stream;
     CHECK_PA_LAUNCH(Pa_OpenDefaultStream(&stream,
         0,                 /* no input channels */
@@ -128,7 +147,8 @@ int main(int argc, char **argv) {
     igl::opengl::glfw::Viewer viewer;
     C = Eigen::MatrixXd::Constant(F.rows(),3,1);
     viewer.callback_mouse_down =
-        [&V,&F,&C,&modes,&VN,&solver](igl::opengl::glfw::Viewer& viewer, int, int modifier)->bool {
+        [&V,&F,&C,&modes,&VN,&solver,&N_modesAudible](
+            igl::opengl::glfw::Viewer& viewer, int, int modifier)->bool {
             if (modifier == GLFW_MOD_SHIFT) {
                 int fid, vid;
                 Eigen::Vector3f bc;
@@ -150,8 +170,8 @@ int main(int argc, char **argv) {
                     if (bc[2] > lar) vid = F(fid, 2);
                     vn = VN.row(vid).normalized();
                     ForceMessage<double> &force = solver.getForceMessage();
-                    force.data.setZero(modes.numModes());
-                    for (int mm=0; mm<modes.numModes(); ++mm) {
+                    force.data.setZero(N_modesAudible);
+                    for (int mm=0; mm<N_modesAudible; ++mm) {
                         force.data(mm) = vn[0]*modes.mode(mm).at(vid*3+0)
                                        + vn[1]*modes.mode(mm).at(vid*3+1)
                                        + vn[2]*modes.mode(mm).at(vid*3+2);
@@ -172,10 +192,10 @@ int main(int argc, char **argv) {
     menu.callback_draw_viewer_menu = [&]()
     {
         // viewer menu
-        menu.draw_viewer_menu();
+        //menu.draw_viewer_menu();
 
         // simulation menu
-        ImGui::SetNextWindowPos(ImVec2(200,0));
+        ImGui::SetNextWindowPos(ImVec2(0,0));
         ImGui::SetNextWindowSize(ImVec2(200,500));
         ImGui::Begin("Simulation");
         auto extractLast = [](const std::string str, const std::string delim) {
@@ -240,13 +260,12 @@ int main(int argc, char **argv) {
             }
             ImGui::PlotLines("Lines", values, IM_ARRAYSIZE(values), values_offset, "avg 0.0", -1.0f, 1.0f, ImVec2(0,80));
             // FIXME debug START // TODO
-            Eigen::Matrix<float,-1,1> hist = paData.transMessage.data.cast<float>();
-            const int N_modes = paData.transMessage.data.size();
-            for (int ii=0; ii<hist.size(); ++ii) {
-                hist(ii) = 0.9*std::abs(cos(ii*0.5f) + 0.2*cos(ii*0.3f+2.));
-            }
-            std::cout << hist << std::endl;
-            ImGui::PlotHistogram("Transfer", hist.data(), paData.transMessage.data.size(), 0, NULL, 0.0f, 1.0f, ImVec2(0,80));
+            Eigen::Matrix<float,-1,1> hist =
+                paData.transMessage.data.cast<float>();
+            ImGui::PlotHistogram("Transfer",
+                hist.data(),
+                paData.transMessage.data.size(),
+                0, NULL, 0.0f, 1.0f, ImVec2(0,80));
 		}
         ImGui::End();
     };
@@ -256,11 +275,17 @@ int main(int argc, char **argv) {
     viewer.data().show_lines = false;
     viewer.data().set_face_based(true);
     viewer.callback_post_draw =
-        [&stream](igl::opengl::glfw::Viewer &viewer) {
+        [&stream, &solver](igl::opengl::glfw::Viewer &viewer) {
             if (!PA_STREAM_STARTED) {
                 CHECK_PA_LAUNCH(Pa_StartStream(stream));
                 PA_STREAM_STARTED = true;
             }
+            // update the transfer
+            auto &core = viewer.core;
+            const Eigen::Matrix<double,3,1> camera_pos = (core.camera_eye +
+                core.camera_translation +
+                core.camera_base_translation).cast<double>();
+            solver.computeTransfer(camera_pos);
             return false;
         };
     viewer.launch();
