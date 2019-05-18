@@ -31,7 +31,8 @@ class ModalIntegrator {
                         const ModalVec &a, const ModalVec &b);
         static ModalIntegrator<T> *Build(const T density,
                                          const std::vector<T> omegaSquared,
-                                         const T alpha, const T beta, const T h);
+                                         const T alpha, const T beta, const T h,
+                                         int N=-1);
         const ModalVec &Step(const ModalVec &Q);
         const ModalVec &Step();
 };
@@ -40,8 +41,13 @@ template<typename T>
 ModalIntegrator<T> *ModalIntegrator<T>::Build(const T density,
                                               const std::vector<T> omegaSquared,
                                               const T alpha, const T beta,
-                                              const T h) {
-    const int N = omegaSquared.size();
+                                              const T h,
+                                              int N) {
+    if (N<0) {
+        N = omegaSquared.size();
+    } else {
+        assert(N < omegaSquared.size() && "N for modal integrator invalid");
+    }
     ModalVec a, b;
     a.resize(N);
     b.resize(N);
@@ -92,17 +98,9 @@ const typename ModalIntegrator<T>::ModalVec &ModalIntegrator<T>::Step(const Moda
     ModalVec &q_k         = _q.at((_q_curr_ptr+1)%3);
     const ModalVec &q_km1 = _q.at((_q_curr_ptr  )%3);
     const ModalVec &q_km2 = _q.at((_q_curr_ptr+2)%3);
-    if (Q.size() == _c3.size()) {
-        q_k = _c1.cwiseProduct(q_km1) + _c2.cwiseProduct(q_km2)
-            + _c3.cwiseProduct(Q);
-    } else {
-        // FIXME debug temporary fix
-        ModalVec Q_;
-        Q_.setZero(_c3.size());
-        Q_.head(Q.size()) = Q;
-        q_k = _c1.cwiseProduct(q_km1) + _c2.cwiseProduct(q_km2)
-            + _c3.cwiseProduct(Q_);
-    }
+    assert(Q.size() == _c3.size() && "input force incorrect dimension");
+    q_k = _c1.cwiseProduct(q_km1) + _c2.cwiseProduct(q_km2)
+        + _c3.cwiseProduct(Q);
     _q_curr_ptr = (_q_curr_ptr + 1)%3;
     return q_k;
 }

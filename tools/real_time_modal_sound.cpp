@@ -88,12 +88,6 @@ int main(int argc, char **argv) {
     assert(modes.numDOF() == V.rows()*3 && "DOFs mismatch");
 
     // build modal integrator and solver/scheduler
-    ModalIntegrator<double> *integrator = ModalIntegrator<double>::Build(
-        material->density,
-        modes._omegaSquared,
-        material->alpha,
-        material->beta,
-        1./(double)SAMPLE_RATE);
     int N_modesAudible = modes.numModes();
     if (parser->get<std::string>("p") != FILE_NOT_EXIST) {
         std::string maxFreqFile =
@@ -109,6 +103,13 @@ int main(int argc, char **argv) {
         N_modesAudible = modes.numModesAudible(material->density, maxFreq);
     }
     ModalSolver<double> solver(N_modesAudible);
+    ModalIntegrator<double> *integrator = ModalIntegrator<double>::Build(
+        material->density,
+        modes._omegaSquared,
+        material->alpha,
+        material->beta,
+        1./(double)SAMPLE_RATE,
+        N_modesAudible);
     solver.setIntegrator(integrator);
 
     // start a simulation thread and use max priority
