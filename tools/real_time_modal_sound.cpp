@@ -44,7 +44,6 @@ cli::Parser *CreateParser(int argc, char **argv) {
 struct PaModalData {
     ModalSolver<double> *solver;
     SoundMessage<double> soundMessage;
-    TransMessage<double> transMessage;
 };
 int PaModalCallback(const void *inputBuffer,
                     void *outputBuffer,
@@ -59,8 +58,8 @@ int PaModalCallback(const void *inputBuffer,
     (void) inputBuffer; /* Prevent unused variable warning. */
     bool success = data->solver->dequeueSoundMessage(data->soundMessage);
     for( i=0; i<framesPerBuffer; i++ ) {
-        *out++ = (float)(data->soundMessage.data(i)/300.);
-        *out++ = (float)(data->soundMessage.data(i)/300.);
+        *out++ = (float)(data->soundMessage.data(i)/1E10);
+        *out++ = (float)(data->soundMessage.data(i)/1E10);
     }
     return 0;
 }
@@ -131,8 +130,6 @@ int main(int argc, char **argv) {
     CHECK_PA_LAUNCH(Pa_Initialize());
     PaModalData paData;
     paData.solver = &solver;
-    paData.transMessage =
-        TransMessage<double>(N_modesAudible); // TODO use actual transfer message
     PaStream *stream;
     CHECK_PA_LAUNCH(Pa_OpenDefaultStream(&stream,
         0,                 /* no input channels */
@@ -259,12 +256,12 @@ int main(int argc, char **argv) {
                 refresh_time += 1.0f/60.0f;
             }
             ImGui::PlotLines("Lines", values, IM_ARRAYSIZE(values), values_offset, "avg 0.0", -1.0f, 1.0f, ImVec2(0,80));
-            // FIXME debug START // TODO
-            Eigen::Matrix<float,-1,1> hist =
-                paData.transMessage.data.cast<float>();
+            const auto transfer = solver.getLatestTransfer();
+            const Eigen::Matrix<float,-1,1> hist = transfer.data.cast<float>()/
+                transfer.data.array().abs().maxCoeff();
             ImGui::PlotHistogram("Transfer",
                 hist.data(),
-                paData.transMessage.data.size(),
+                solver.getLatestTransfer().data.size(),
                 0, NULL, 0.0f, 1.0f, ImVec2(0,80));
 		}
         ImGui::End();
@@ -282,10 +279,18 @@ int main(int argc, char **argv) {
             }
             // update the transfer
             auto &core = viewer.core;
-            const Eigen::Matrix<double,3,1> camera_pos = (core.camera_eye +
-                core.camera_translation +
-                core.camera_base_translation).cast<double>();
-            solver.computeTransfer(camera_pos);
+            // TODO check if this transformation is correct
+            Eigen::Matrix<float,4,1> eye;
+            eye << core.camera_eye, 1.0f;
+            const Eigen::Matrix<double,3,1> camera_pos =
+                (core.view.inverse() * eye).cast<double>().head(3);
+            static Eigen::Matrix<double,3,1> last_camera_pos;
+            static bool cache_initialize = false;
+            if (camera_pos != last_camera_pos || !cache_initialize) {
+                solver.computeTransfer(camera_pos);
+                last_camera_pos = camera_pos;
+                cache_initialize = true;
+            }
             return false;
         };
     viewer.launch();

@@ -9,13 +9,17 @@ option(LIBIGL_WITH_OPENGL_GLFW       "Use GLFW"           ON)
 option(LIBIGL_WITH_VIEWER            "Use OpenGL viewer"  ON)
 option(LIBIGL_WITH_OPENGL_GLFW_IMGUI "Use Imgui"          ON)
 
+# FIXME hack for not using the default /usr/local .. path
+set(Protobuf_SRC_ROOT_FOLDER /Users/jui-hsien/code/modal_demo/external)
+
 find_package(LIBIGL REQUIRED QUIET)
 find_package(Portaudio REQUIRED)
+find_package(Protobuf REQUIRED)
 
 # Add your project files
-file(GLOB SRCFILES *.cpp)
+file(GLOB SRCFILES *.cpp *.cc)
 file(GLOB TOOLS tools/*.cpp)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${Protobuf_INCLUDE_DIRS})
 
 foreach(TOOL_NAME ${TOOLS})
     get_filename_component(TOOL_BIN ${TOOL_NAME} NAME_WE)
@@ -26,5 +30,6 @@ foreach(TOOL_NAME ${TOOLS})
         igl::core
         igl::opengl_glfw
         igl::opengl_glfw_imgui
-        ${PORTAUDIO_LIBRARIES})
+        ${PORTAUDIO_LIBRARIES}
+        ${Protobuf_LIBRARIES})
 endforeach()

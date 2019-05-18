@@ -17,6 +17,10 @@
 #endif
 //##############################################################################
 namespace Gpu_Wavesolver {
+    //##############################################################################
+    // Forward declaration
+struct FFAT_Map_Serialize_Double;
+typedef FFAT_Map_Serialize_Double FFAT_Map_Serialize;
 //##############################################################################
 template<typename T, int M> class FFAT_Solver { /*not implemented*/ };
 //##############################################################################
@@ -89,6 +93,8 @@ public:
         std::vector<Eigen::Vector3i> &F,
         std::vector<int> &dataIndices,
         std::vector<std::pair<int,int>> &N_elements);
+    // Note: This save method was observed to not be portable from my Linux
+    // machine to my Mac machine.
     static void Save(const char *filename, const FFAT_Map<T,1> &map);
     static void Load(const char *filename, FFAT_Map<T,1> &map);
     static std::map<int,FFAT_Map<T,1>> *LoadAll(const char *dirname);
@@ -166,7 +172,8 @@ private:
     FFAT_Vector3d _bboxLow;
     FFAT_Vector3d _bboxTop;
 
-    friend class FFAT_Map<T,3>;
+friend class FFAT_Map<T,3>;
+friend FFAT_Map_Serialize;
 };
 //##############################################################################
 template<typename T>
@@ -277,6 +284,7 @@ private:
     // optional compression
     bool _is_compressed = false;
     FFAT_MatrixXd _compressed_Psi;
+friend FFAT_Map_Serialize;
 };
 //##############################################################################
 //##############################################################################
@@ -496,7 +504,7 @@ void FFAT_Map<T,1>::Load(const char *filename, FFAT_Map<T,1> &map) {
 template<typename T>
 std::map<int,FFAT_Map<T,1>> *FFAT_Map<T,1>::LoadAll(const char *dirname) {
     std::vector<std::string> filenames;
-    ListDirFiles(dirname, filenames);
+    ListDirFiles(dirname, filenames, ".fatcube");
     std::map<int,FFAT_Map<T,1>> *map = new std::map<int,FFAT_Map<T,1>>();
     for (const auto &filename : filenames) {
         FFAT_Map<T,1> map_;
@@ -875,8 +883,8 @@ void FFAT_Solver<T,3>::Solve(
         Eigen::JacobiSVD<FFAT_MatrixXd, Eigen::FullPivHouseholderQRPreconditioner> svd(basis,
                 Eigen::ComputeFullU | Eigen::ComputeFullV);
         //Eigen::JacobiSVD<FFAT_Matrix3d> svd(basis);
-        T cond = svd.singularValues()(0)
-                / svd.singularValues()(svd.singularValues().size()-1);
+        //T cond = svd.singularValues()(0)
+        //        / svd.singularValues()(svd.singularValues().size()-1);
         Psi.row(ii) = svd.solve(p2);
     }
 }

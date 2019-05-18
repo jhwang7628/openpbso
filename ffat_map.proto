@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package ffat_map;
+
+message vec {
+    repeated double item = 1;
+}
+
+// column-major matrix
+message mat {
+    repeated vec item = 1;
+}
+
+message vec_i {
+    repeated int32 item = 1;
+}
+
+// column-major matrix (integer type)
+message mat_i {
+    repeated vec_i item = 1;
+}
+
+message ffat_map_t_1 {
+    double cellsize = 1;
+    mat lowcorners = 2;
+    mat_i n_elements = 3;
+    vec_i strides = 4;
+    vec center = 5;
+    vec bboxlow = 6;
+    vec bboxtop = 7;
+}
+
+message ffat_map_t_3 {
+    double k = 1;
+    vec center = 2;
+    ffat_map_t_1 shells = 3;
+    bool is_compressed = 4;
+    mat psi = 5; // psi can be compressed or uncompressed.
+    int32 modeid = 6;
+}
+
+message ffat_map_double {
+    ffat_map_t_3 map = 1;
+}
