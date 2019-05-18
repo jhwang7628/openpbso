@@ -46,7 +46,7 @@ ModalIntegrator<T> *ModalIntegrator<T>::Build(const T density,
     if (N<0) {
         N = omegaSquared.size();
     } else {
-        assert(N < omegaSquared.size() && "N for modal integrator invalid");
+        assert(N <= omegaSquared.size() && "N for modal integrator invalid");
     }
     ModalVec a, b;
     a.resize(N);

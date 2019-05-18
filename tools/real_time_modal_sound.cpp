@@ -41,6 +41,21 @@ cli::Parser *CreateParser(int argc, char **argv) {
     return parser;
 }
 //##############################################################################
+struct ViewerSettings {
+    bool useTransfer = true;
+    bool useTransferCache = true;
+} VIEWER_SETTINGS;
+//##############################################################################
+Eigen::Matrix<double,3,1> getCameraWorldPosition(
+    const igl::opengl::glfw::Viewer &viewer) {
+    auto &core = viewer.core;
+    Eigen::Matrix<float,4,1> eye;
+    eye << core.camera_eye, 1.0f;
+    const Eigen::Matrix<double,3,1> camera_pos =
+        (core.view.inverse() * eye).cast<double>().head(3);
+    return camera_pos;
+}
+//##############################################################################
 struct PaModalData {
     ModalSolver<double> *solver;
     SoundMessage<double> soundMessage;
@@ -93,15 +108,16 @@ int main(int argc, char **argv) {
         std::string maxFreqFile =
             parser->get<std::string>("p") + "/freq_threshold.txt";
         std::ifstream stream(maxFreqFile.c_str());
-        assert(stream &&
-            "freq_threshold.txt does not exist in the ffat folder");
-        std::string line;
-        std::getline(stream, line);
-        std::istringstream iss(line);
-        double maxFreq;
-        iss >> maxFreq;
-        N_modesAudible = modes.numModesAudible(material->density, maxFreq);
+        if (stream) {
+            std::string line;
+            std::getline(stream, line);
+            std::istringstream iss(line);
+            double maxFreq;
+            iss >> maxFreq;
+            N_modesAudible = modes.numModesAudible(material->density, maxFreq);
+        }
     }
+    std::cout << "Number of audible modes: " << N_modesAudible << std::endl;
     ModalSolver<double> solver(N_modesAudible);
     ModalIntegrator<double> *integrator = ModalIntegrator<double>::Build(
         material->density,
@@ -194,7 +210,7 @@ int main(int argc, char **argv) {
 
         // simulation menu
         ImGui::SetNextWindowPos(ImVec2(0,0));
-        ImGui::SetNextWindowSize(ImVec2(200,500));
+        ImGui::SetNextWindowSize(ImVec2(250,500));
         ImGui::Begin("Simulation");
         auto extractLast = [](const std::string str, const std::string delim) {
             return str.substr(str.rfind(delim)+1);
@@ -210,7 +226,7 @@ int main(int argc, char **argv) {
             if (ImGui::TreeNode("Geometry")) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f,0.8f,0.8f,1.0f));
                 ImGui::Columns(2, "mycolumns2", false);
-                ImGui::Text("Mesh"); ImGui::NextColumn();
+                ImGui::Text("Mesh file"); ImGui::NextColumn();
                 ImGui::Text("%s", extractLast(parser->get<std::string>("m"), "/").c_str()); ImGui::NextColumn();
                 ImGui::Text("#Vertices"); ImGui::NextColumn();
                 ImGui::Text("%d", (int)V.rows()); ImGui::NextColumn();
@@ -223,6 +239,12 @@ int main(int argc, char **argv) {
             if (ImGui::TreeNode("Modal Info")) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f,0.8f,0.8f,1.0f));
                 ImGui::Columns(2, "mycolumns2", false);
+                ImGui::Text("Modes file"); ImGui::NextColumn();
+                ImGui::Text("%s", extractLast(parser->get<std::string>("s"), "/").c_str()); ImGui::NextColumn();
+                ImGui::Text("#Modes"); ImGui::NextColumn();
+                ImGui::Text("%d", modes.numModes()); ImGui::NextColumn();
+                ImGui::Text("#Audible modes"); ImGui::NextColumn();
+                ImGui::Text("%d", N_modesAudible); ImGui::NextColumn();
                 ImGui::Text("Material file"); ImGui::NextColumn();
                 ImGui::Text("%s", extractLast(parser->get<std::string>("t"), "/").c_str()); ImGui::NextColumn();
                 ImGui::Text("Density"); ImGui::NextColumn();
@@ -240,30 +262,47 @@ int main(int argc, char **argv) {
                 ImGui::PopStyleColor();
             }
         }
-		if (ImGui::CollapsingHeader("Sound Model")) {
-            static bool animate = true;
-            static float arr[] = { 0.6f, 0.1f, 1.0f, 0.5f, 0.92f, 0.1f, 0.2f };
-            static float values[90] = { 0 };
-            static int values_offset = 0;
-            static double refresh_time = 0.0;
-            if (!animate || refresh_time == 0.0f)
-                refresh_time = ImGui::GetTime();
-            while (refresh_time < ImGui::GetTime()) // Create dummy data at fixed 60 hz rate for the demo
-            {
-                static float phase = 0.0f;
-                values[values_offset] = cosf(phase);
-                values_offset = (values_offset+1) % IM_ARRAYSIZE(values);
-                phase += 0.10f*values_offset;
-                refresh_time += 1.0f/60.0f;
+		if (ImGui::CollapsingHeader(
+            "Sound Model", ImGuiTreeNodeFlags_DefaultOpen)) {
+            //static bool animate = true;
+            //static float arr[] = { 0.6f, 0.1f, 1.0f, 0.5f, 0.92f, 0.1f, 0.2f };
+            //static float values[90] = { 0 };
+            //static int values_offset = 0;
+            //static double refresh_time = 0.0;
+            //if (!animate || refresh_time == 0.0f)
+            //    refresh_time = ImGui::GetTime();
+            //while (refresh_time < ImGui::GetTime()) // Create dummy data at fixed 60 hz rate for the demo
+            //{
+            //    static float phase = 0.0f;
+            //    values[values_offset] = cosf(phase);
+            //    values_offset = (values_offset+1) % IM_ARRAYSIZE(values);
+            //    phase += 0.10f*values_offset;
+            //    refresh_time += 1.0f/60.0f;
+            //}
+            //ImGui::PlotLines("Lines", values, IM_ARRAYSIZE(values), values_offset, "avg 0.0", -1.0f, 1.0f, ImVec2(0,80));
+            ImGui::Checkbox(
+                "Enable FFAT transfer", &VIEWER_SETTINGS.useTransfer);
+            if (VIEWER_SETTINGS.useTransfer !=
+                VIEWER_SETTINGS.useTransferCache) {
+                solver.setUseTransfer(VIEWER_SETTINGS.useTransfer);
+                solver.computeTransfer(
+                    getCameraWorldPosition(viewer));
+                VIEWER_SETTINGS.useTransferCache = VIEWER_SETTINGS.useTransfer;
             }
-            ImGui::PlotLines("Lines", values, IM_ARRAYSIZE(values), values_offset, "avg 0.0", -1.0f, 1.0f, ImVec2(0,80));
             const auto transfer = solver.getLatestTransfer();
             const Eigen::Matrix<float,-1,1> hist = transfer.data.cast<float>()/
                 transfer.data.array().abs().maxCoeff();
-            ImGui::PlotHistogram("Transfer",
+            ImGui::BeginChild(
+                "histogram",
+                ImVec2(220, 115),
+                true);
+            ImGui::PlotHistogram("",
                 hist.data(),
                 solver.getLatestTransfer().data.size(),
-                0, NULL, 0.0f, 1.0f, ImVec2(0,80));
+                0, nullptr, 0.0f, 1.0f, ImVec2(200, 80));
+            ImGui::Text("Transfer values for different modes");
+            ImGui::EndChild();
+            ImGui::Text("this is the next line");
 		}
         ImGui::End();
     };
@@ -279,13 +318,9 @@ int main(int argc, char **argv) {
                 PA_STREAM_STARTED = true;
             }
             // update the transfer
-            auto &core = viewer.core;
-            // TODO check if this transformation is correct
-            Eigen::Matrix<float,4,1> eye;
-            eye << core.camera_eye, 1.0f;
-            const Eigen::Matrix<double,3,1> camera_pos =
-                (core.view.inverse() * eye).cast<double>().head(3);
             static Eigen::Matrix<double,3,1> last_camera_pos;
+            const Eigen::Matrix<double,3,1> camera_pos =
+                getCameraWorldPosition(viewer);
             static bool cache_initialize = false;
             if (camera_pos != last_camera_pos || !cache_initialize) {
                 solver.computeTransfer(camera_pos);

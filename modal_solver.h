@@ -2,6 +2,7 @@
 #define MODAL_SOLVER_H
 #include <ctime>
 #include <memory>
+#include <mutex>
 #include "Eigen/Dense"
 #include "external/readerwriterqueue.h"
 #include "modal_integrator.h"
@@ -24,10 +25,16 @@ struct SoundMessage {
 template<typename T>
 struct TransMessage {
     bool useCompressed = false;
+    int N = 0;
     Eigen::Matrix<T,-1,1> data;
-    explicit TransMessage() = default;
-    explicit TransMessage(const int N) {
+    void setToUnit() {
         data.setOnes(N);
+        data*=1E7;
+    }
+    explicit TransMessage() = default;
+    explicit TransMessage(const int N_)
+        : N(N_) {
+        setToUnit();
     }
 };
 //##############################################################################
@@ -47,6 +54,10 @@ private:
     const int _N_modes;
     std::unique_ptr<std::map<int,FFAT_Map>> _ffat_maps;
 
+    std::mutex _useTransferMutex;
+    bool _useTransfer;
+    bool _useTransferCache;
+
 public:
     explicit ModalSolver(const int N_modes)
         : _queue_force(512),
@@ -54,7 +65,9 @@ public:
           _queue_trans(1),
           _mess_trans(N_modes),
           _latest_transfer(N_modes),
-          _N_modes(N_modes) {
+          _N_modes(N_modes),
+          _useTransfer(true),
+          _useTransferCache(true) {
     }
     inline void setIntegrator(ModalIntegrator<T> *integrator) {
         _integrator = integrator;
@@ -64,6 +77,11 @@ public:
     }
     inline const TransMessage<T> &getLatestTransfer() {
         return _latest_transfer;
+    }
+    inline void setUseTransfer(const bool s) {
+        _useTransferMutex.lock();
+        _useTransfer = s;
+        _useTransferMutex.unlock();
     }
 
     void step();
@@ -83,9 +101,20 @@ void ModalSolver<T, BUF_SIZE>::step(){
     bool success = dequeueForceMessage(_mess_force);
 
     TransMessage<T> trans;
-    if (dequeueTransMessage(trans)) {
-        _latest_transfer = trans;
+    bool useTransfer = _useTransferCache;
+    // only set this field if can obtain lock
+    if (_useTransferMutex.try_lock()) {
+        useTransfer = _useTransfer;
+        _useTransferMutex.unlock();
     }
+    if (useTransfer) {
+        if (dequeueTransMessage(trans)) {
+            _latest_transfer = trans;
+        }
+    } else {
+        _latest_transfer.setToUnit();
+    }
+    _useTransferCache = useTransfer;
 
     // TODO: dont need to integrate all qs...
     if (!success) { // use zero force
