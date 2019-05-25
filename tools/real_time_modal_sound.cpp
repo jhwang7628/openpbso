@@ -3,6 +3,8 @@
 #include <thread>
 #include <pthread.h>
 #include <string>
+#include <deque>
+#include <chrono>
 #include "igl/read_triangle_mesh.h"
 #include "igl/unproject_onto_mesh.h"
 #include "igl/per_vertex_normals.h"
@@ -44,7 +46,18 @@ cli::Parser *CreateParser(int argc, char **argv) {
 struct ViewerSettings {
     bool useTransfer = true;
     bool useTransferCache = true;
+    float bufferHealth[100] = {1.0f};
+    int bufferHealthPtr = 0;
+    static float renderFaceTime;
+    std::deque<std::pair<int,std::chrono::time_point<
+        std::chrono::high_resolution_clock>>> activeFaceIds;
+    ForceMessage<double> hitForceCache;
+    int hitFidCache = 0;
+    void incrementBufferHealthPtr() {
+        bufferHealthPtr = (bufferHealthPtr+1)%100;
+    }
 } VIEWER_SETTINGS;
+float ViewerSettings::renderFaceTime = 1.5f;
 //##############################################################################
 Eigen::Matrix<double,3,1> getCameraWorldPosition(
     const igl::opengl::glfw::Viewer &viewer) {
@@ -72,6 +85,9 @@ int PaModalCallback(const void *inputBuffer,
     unsigned int i;
     (void) inputBuffer; /* Prevent unused variable warning. */
     bool success = data->solver->dequeueSoundMessage(data->soundMessage);
+    VIEWER_SETTINGS.bufferHealth[VIEWER_SETTINGS.bufferHealthPtr] =
+        (float)success;
+    VIEWER_SETTINGS.incrementBufferHealthPtr();
     for( i=0; i<framesPerBuffer; i++ ) {
         *out++ = (float)(data->soundMessage.data(i)/1E10);
         *out++ = (float)(data->soundMessage.data(i)/1E10);
@@ -127,6 +143,7 @@ int main(int argc, char **argv) {
         1./(double)SAMPLE_RATE,
         N_modesAudible);
     solver.setIntegrator(integrator);
+    VIEWER_SETTINGS.hitForceCache.data.setZero(N_modesAudible);
 
     // start a simulation thread and use max priority
     std::thread threadSim([&solver](){
@@ -159,6 +176,7 @@ int main(int argc, char **argv) {
 
     // Plot the mesh
     igl::opengl::glfw::Viewer viewer;
+    viewer.core.is_animating = true;
     C = Eigen::MatrixXd::Constant(F.rows(),3,1);
     viewer.callback_mouse_down =
         [&V,&F,&C,&modes,&VN,&solver,&N_modesAudible](
@@ -168,13 +186,17 @@ int main(int argc, char **argv) {
                 Eigen::Vector3f bc;
                 Eigen::Vector3d vn;
                 Eigen::RowVector3d hp;
-                // Cast a ray in the view direction starting from the mouse position
+                // Cast a ray in the view direction starting from the mouse
+                // position
                 double x = viewer.current_mouse_x;
                 double y = viewer.core.viewport(3) - viewer.current_mouse_y;
-                if(igl::unproject_onto_mesh(Eigen::Vector2f(x,y), viewer.core.view,
-                            viewer.core.proj, viewer.core.viewport, V, F, fid, bc)) {
+                if(igl::unproject_onto_mesh(
+                    Eigen::Vector2f(x,y), viewer.core.view,
+                    viewer.core.proj, viewer.core.viewport, V, F, fid, bc)) {
                     // paint hit red
-                    C.row(fid)<<1,0,0;
+                    //C.row(fid)<<1,0,0;
+                    VIEWER_SETTINGS.activeFaceIds.push_back(
+                        {fid,std::chrono::high_resolution_clock::now()});
                     vid = F(fid, 0);
                     float lar = bc[0];
                     if (bc[1] > bc[0]) {
@@ -191,9 +213,9 @@ int main(int argc, char **argv) {
                                        + vn[2]*modes.mode(mm).at(vid*3+2);
                     }
                     solver.enqueueForceMessage(force);
+                    VIEWER_SETTINGS.hitForceCache = force;
+                    VIEWER_SETTINGS.hitFidCache = fid;
                     hp = V.row(vid);
-                    viewer.data().point_size = 5;
-                    viewer.data().set_points(hp, Eigen::RowVector3d(0,1,0));
                     viewer.data().set_colors(C);
                     return true;
                 }
@@ -210,19 +232,12 @@ int main(int argc, char **argv) {
 
         // simulation menu
         ImGui::SetNextWindowPos(ImVec2(0,0));
-        ImGui::SetNextWindowSize(ImVec2(250,500));
+        ImGui::SetNextWindowSize(ImVec2(250,0));
         ImGui::Begin("Simulation");
         auto extractLast = [](const std::string str, const std::string delim) {
             return str.substr(str.rfind(delim)+1);
         };
         if (ImGui::CollapsingHeader("Info", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (ImGui::Button("Unfold All")) {
-                std::cout << "unfold all\n";
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Fold All")) {
-                std::cout << "fold all\n";
-            }
             if (ImGui::TreeNode("Geometry")) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f,0.8f,0.8f,1.0f));
                 ImGui::Columns(2, "mycolumns2", false);
@@ -264,22 +279,11 @@ int main(int argc, char **argv) {
         }
 		if (ImGui::CollapsingHeader(
             "Sound Model", ImGuiTreeNodeFlags_DefaultOpen)) {
-            //static bool animate = true;
-            //static float arr[] = { 0.6f, 0.1f, 1.0f, 0.5f, 0.92f, 0.1f, 0.2f };
-            //static float values[90] = { 0 };
-            //static int values_offset = 0;
-            //static double refresh_time = 0.0;
-            //if (!animate || refresh_time == 0.0f)
-            //    refresh_time = ImGui::GetTime();
-            //while (refresh_time < ImGui::GetTime()) // Create dummy data at fixed 60 hz rate for the demo
-            //{
-            //    static float phase = 0.0f;
-            //    values[values_offset] = cosf(phase);
-            //    values_offset = (values_offset+1) % IM_ARRAYSIZE(values);
-            //    phase += 0.10f*values_offset;
-            //    refresh_time += 1.0f/60.0f;
-            //}
-            //ImGui::PlotLines("Lines", values, IM_ARRAYSIZE(values), values_offset, "avg 0.0", -1.0f, 1.0f, ImVec2(0,80));
+            ImGui::BeginChild(
+                "option",
+                ImVec2(220, 115),
+                true);
+            ImGui::Text("Rendering Options");
             ImGui::Checkbox(
                 "Enable FFAT transfer", &VIEWER_SETTINGS.useTransfer);
             if (VIEWER_SETTINGS.useTransfer !=
@@ -289,6 +293,27 @@ int main(int argc, char **argv) {
                     getCameraWorldPosition(viewer));
                 VIEWER_SETTINGS.useTransferCache = VIEWER_SETTINGS.useTransfer;
             }
+            if (ImGui::Button("Repeat hit")) {
+                solver.enqueueForceMessage(VIEWER_SETTINGS.hitForceCache);
+                VIEWER_SETTINGS.activeFaceIds.push_back(
+                    {VIEWER_SETTINGS.hitFidCache,
+                    std::chrono::high_resolution_clock::now()});
+            }
+            ImGui::EndChild();
+            ImGui::BeginChild(
+                "health",
+                ImVec2(220, 75),
+                true);
+            ImGui::Text("Audio buffer health status:");
+            ImGui::PlotLines(
+                "",
+                &(VIEWER_SETTINGS.bufferHealth[0]),
+                IM_ARRAYSIZE(VIEWER_SETTINGS.bufferHealth),
+                VIEWER_SETTINGS.bufferHealthPtr,
+                nullptr,
+                0.0f, 1.0f,
+                ImVec2(200, 40));
+            ImGui::EndChild();
             const auto transfer = solver.getLatestTransfer();
             const Eigen::Matrix<float,-1,1> hist = transfer.data.cast<float>()/
                 transfer.data.array().abs().maxCoeff();
@@ -296,11 +321,11 @@ int main(int argc, char **argv) {
                 "histogram",
                 ImVec2(220, 115),
                 true);
+            ImGui::Text("Transfer values for different modes:");
             ImGui::PlotHistogram("",
                 hist.data(),
                 solver.getLatestTransfer().data.size(),
                 0, nullptr, 0.0f, 1.0f, ImVec2(200, 80));
-            ImGui::Text("Transfer values for different modes");
             ImGui::EndChild();
             ImGui::Text("this is the next line");
 		}
@@ -311,6 +336,37 @@ int main(int argc, char **argv) {
     viewer.data().set_colors(C);
     viewer.data().show_lines = false;
     viewer.data().set_face_based(true);
+    viewer.callback_pre_draw =
+        [&](igl::opengl::glfw::Viewer &viewer) {
+            auto &queue = VIEWER_SETTINGS.activeFaceIds;
+            while (!queue.empty()) {
+                const auto front = queue.front();
+                const std::chrono::duration<float> diff =
+                    std::chrono::high_resolution_clock::now() - front.second;
+                if (diff.count() > ViewerSettings::renderFaceTime) {
+                    C.row(front.first)<<1,1,1;
+                    queue.pop_front();
+                } else {
+                    break;
+                }
+            }
+            C = Eigen::MatrixXd::Constant(F.rows(),3,1);
+            for (auto it=queue.begin(); it!=queue.end(); ++it) {
+                const std::chrono::duration<float> diff =
+                    std::chrono::high_resolution_clock::now() - it->second;
+                if (diff.count() > ViewerSettings::renderFaceTime) {
+                    C.row(it->first)<<1,1,1;
+                } else {
+                    const float blend = std::min(1.0f, std::max(0.0f,
+                        (diff.count()) /
+                        ViewerSettings::renderFaceTime));
+                    C.row(it->first)<<1.f,blend,1.f;
+                }
+            }
+            // TODO send only the needed rows
+            viewer.data().set_colors(C);
+            return false;
+        };
     viewer.callback_post_draw =
         [&stream, &solver](igl::opengl::glfw::Viewer &viewer) {
             if (!PA_STREAM_STARTED) {

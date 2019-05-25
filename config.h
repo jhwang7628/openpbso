@@ -4,6 +4,6 @@
 #define FILE_NOT_EXIST "__NA_FILE"
 //##############################################################################
 const static int SAMPLE_RATE = 44100.;
-const static int FRAMES_PER_BUFFER = 256;
+const static int FRAMES_PER_BUFFER = 513;
 //##############################################################################
 #endif
