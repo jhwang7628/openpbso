@@ -9,6 +9,7 @@
 #include "modal_integrator.h"
 #include "ffat_solver.h"
 #include "ffat_map_serialize.h"
+#include "forces.h"
 //##############################################################################
 template<typename T>
 struct ForceControl {
@@ -63,6 +64,7 @@ private:
     ModalIntegrator<T> *_integrator = nullptr;
     const int _N_modes;
     std::unique_ptr<std::map<int,FFAT_Map>> _ffat_maps;
+    GaussianForce<T, BUF_SIZE> _forces;
 
     std::mutex _useTransferMutex;
     bool _useTransfer;
