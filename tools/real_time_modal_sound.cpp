@@ -279,25 +279,28 @@ int main(int argc, char **argv) {
         }
 		if (ImGui::CollapsingHeader(
             "Sound Model", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Impact Force Control:");
             ImGui::BeginChild(
                 "option",
                 ImVec2(220, 115),
                 true);
-            ImGui::Text("Rendering Options");
-            ImGui::Checkbox(
-                "Enable FFAT transfer", &VIEWER_SETTINGS.useTransfer);
-            if (VIEWER_SETTINGS.useTransfer !=
-                VIEWER_SETTINGS.useTransferCache) {
-                solver.setUseTransfer(VIEWER_SETTINGS.useTransfer);
-                solver.computeTransfer(
-                    getCameraWorldPosition(viewer));
-                VIEWER_SETTINGS.useTransferCache = VIEWER_SETTINGS.useTransfer;
-            }
             if (ImGui::Button("Repeat hit")) {
                 solver.enqueueForceMessage(VIEWER_SETTINGS.hitForceCache);
                 VIEWER_SETTINGS.activeFaceIds.push_back(
                     {VIEWER_SETTINGS.hitFidCache,
                     std::chrono::high_resolution_clock::now()});
+            }
+            ForceControl<double> &forceControl = ForceMessage<double>::control;
+            ImGui::Checkbox("Spread out contact forces in time",
+                &forceControl.spreadOut);
+            if (!forceControl.spreadOut) {
+                ImGui::PushStyleVar(
+                    ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+            }
+            ImGui::SliderFloat("width",
+                &forceControl.timeScale, 0.0f, 100.0f, "%.1f (ms)");
+            if (!forceControl.spreadOut) {
+                ImGui::PopStyleVar();
             }
             ImGui::EndChild();
             ImGui::BeginChild(
@@ -319,8 +322,17 @@ int main(int argc, char **argv) {
                 transfer.data.array().abs().maxCoeff();
             ImGui::BeginChild(
                 "histogram",
-                ImVec2(220, 115),
+                ImVec2(220, 145),
                 true);
+            ImGui::Checkbox(
+                "Enable FFAT transfer", &VIEWER_SETTINGS.useTransfer);
+            if (VIEWER_SETTINGS.useTransfer !=
+                VIEWER_SETTINGS.useTransferCache) {
+                solver.setUseTransfer(VIEWER_SETTINGS.useTransfer);
+                solver.computeTransfer(
+                    getCameraWorldPosition(viewer));
+                VIEWER_SETTINGS.useTransferCache = VIEWER_SETTINGS.useTransfer;
+            }
             ImGui::Text("Transfer values for different modes:");
             ImGui::PlotHistogram("",
                 hist.data(),

@@ -3,11 +3,18 @@
 #include <ctime>
 #include <memory>
 #include <mutex>
+#include "config.h"
 #include "Eigen/Dense"
 #include "external/readerwriterqueue.h"
 #include "modal_integrator.h"
 #include "ffat_solver.h"
 #include "ffat_map_serialize.h"
+//##############################################################################
+template<typename T>
+struct ForceControl {
+    bool spreadOut = false;
+    float timeScale = 0.;
+};
 //##############################################################################
 template<typename T, int BUF_SIZE=FRAMES_PER_BUFFER>
 struct ForceMessage {
@@ -15,7 +22,10 @@ struct ForceMessage {
         impulse
     };
     Eigen::Matrix<T,-1,1> data;
+    static ForceControl<T> control;
 };
+template<typename T, int BUF_SIZE>
+ForceControl<T> ForceMessage<T,BUF_SIZE>::control;
 //##############################################################################
 template<typename T, int BUF_SIZE=FRAMES_PER_BUFFER>
 struct SoundMessage {
@@ -116,7 +126,6 @@ void ModalSolver<T, BUF_SIZE>::step(){
     }
     _useTransferCache = useTransfer;
 
-    // TODO: dont need to integrate all qs...
     if (!success) { // use zero force
         for (int ii=0; ii<BUF_SIZE; ++ii) {
             const Eigen::Matrix<T,-1,1> &q =
