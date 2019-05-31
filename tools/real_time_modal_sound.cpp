@@ -57,6 +57,9 @@ struct ViewerSettings {
         bufferHealthPtr = (bufferHealthPtr+1)%100;
     }
     static ForceType forceType;
+    struct GaussianForceParameters {
+        float timeScale;
+    } gaussianForceParameters;
 } VIEWER_SETTINGS;
 float ViewerSettings::renderFaceTime = 1.5f;
 ForceType ViewerSettings::forceType = ForceType::PointForce;
@@ -207,12 +210,20 @@ int main(int argc, char **argv) {
                     }
                     if (bc[2] > lar) vid = F(fid, 2);
                     vn = VN.row(vid).normalized();
-                    ForceMessage<double> &force = solver.getForceMessage();
+                    ForceMessage<double> force;
                     force.data.setZero(N_modesAudible);
                     for (int mm=0; mm<N_modesAudible; ++mm) {
                         force.data(mm) = vn[0]*modes.mode(mm).at(vid*3+0)
                                        + vn[1]*modes.mode(mm).at(vid*3+1)
                                        + vn[2]*modes.mode(mm).at(vid*3+2);
+                    }
+                    force.forceType = VIEWER_SETTINGS.forceType;
+                    if (force.forceType == ForceType::PointForce) {
+                        force.force.reset(new PointForce<double>());
+                    }
+                    else if (force.forceType == ForceType::GaussianForce) {
+                        force.force.reset(new GaussianForce<double>(
+                            VIEWER_SETTINGS.gaussianForceParameters.timeScale));
                     }
                     solver.enqueueForceMessage(force);
                     VIEWER_SETTINGS.hitForceCache = force;
@@ -284,7 +295,7 @@ int main(int argc, char **argv) {
             ImGui::Text("Impact Force Control:");
             ImGui::BeginChild(
                 "option",
-                ImVec2(220, 115),
+                ImVec2(220, 140),
                 true);
             if (ImGui::Button("Repeat hit")) {
                 solver.enqueueForceMessage(VIEWER_SETTINGS.hitForceCache);
@@ -293,17 +304,25 @@ int main(int argc, char **argv) {
                     std::chrono::high_resolution_clock::now()});
             }
             static int force_type = 0;
-            static float time_scale = 0;
-            ImGui::RadioButton("point force", &force_type, 0); ImGui::SameLine();
-            ImGui::RadioButton("gaussian force", &force_type, 1); ImGui::SameLine();
-            ImGui::RadioButton("autoregressive force", &force_type, 2);
+            ImGui::RadioButton("Point force", &force_type, 0);
+            ImGui::RadioButton("Gaussian force", &force_type, 1);
+            ImGui::RadioButton("Autoregressive force", &force_type, 2);
             VIEWER_SETTINGS.forceType = static_cast<ForceType>(force_type);
+            // gaussian force parameters
             if (VIEWER_SETTINGS.forceType != ForceType::GaussianForce) {
                 ImGui::PushStyleVar(
                     ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
             }
             ImGui::SliderFloat("width",
-                &time_scale, 0.0f, 100.0f, "%.1f (ms)");
+                &VIEWER_SETTINGS.gaussianForceParameters.timeScale,
+                10.0f, 500.0f, "%.1f (us)");
+            static int width_samples = 0;
+            width_samples = std::max(
+                1,
+                (int)(
+                    VIEWER_SETTINGS.gaussianForceParameters.timeScale
+                    /1000000.*SAMPLE_RATE));
+            ImGui::SameLine(); ImGui::Text("(%d)", width_samples);
             if (VIEWER_SETTINGS.forceType != ForceType::GaussianForce) {
                 ImGui::PopStyleVar();
             }

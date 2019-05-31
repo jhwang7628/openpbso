@@ -3,6 +3,7 @@
 #include <ctime>
 #include <memory>
 #include <mutex>
+#include <list>
 #include "config.h"
 #include "Eigen/Dense"
 #include "external/readerwriterqueue.h"
@@ -14,12 +15,13 @@
 template<typename T, int BUF_SIZE=FRAMES_PER_BUFFER>
 struct ForceMessage {
     Eigen::Matrix<T,-1,1> data;
-    ForceType forceType;
+    ForceType forceType = ForceType::PointForce;
     std::unique_ptr<Force<T,BUF_SIZE>> force;
     ForceMessage() = default;
     ForceMessage(const ForceMessage<T,BUF_SIZE> &tar)
         : data(tar.data),
-          forceType(tar.forceType) {
+          forceType(tar.forceType),
+          force(new PointForce<T,BUF_SIZE>()){
         _DeepCopyForce(tar);
     }
     ForceMessage<T,BUF_SIZE> &operator = (const ForceMessage<T,BUF_SIZE> &tar) {
@@ -33,17 +35,18 @@ struct ForceMessage {
     }
 private:
     void _DeepCopyForce(const ForceMessage<T,BUF_SIZE> &tar) {
-        if (forceType == ForceType::PointForce) {
+        if (tar.forceType == ForceType::PointForce) {
             force.reset(new PointForce<T,BUF_SIZE>(
                 *(static_cast<PointForce<T,BUF_SIZE>*>(tar.force.get()))));
-        } else if (forceType == ForceType::GaussianForce) {
+        } else if (tar.forceType == ForceType::GaussianForce) {
             force.reset(new GaussianForce<T,BUF_SIZE>(
                 *(static_cast<GaussianForce<T,BUF_SIZE>*>(tar.force.get()))));
-        } else if (forceType == ForceType::AutoregressiveForce) {
+        } else if (tar.forceType == ForceType::AutoregressiveForce) {
             force.reset(new AutoregressiveForce<T,BUF_SIZE>(
                 *(static_cast<AutoregressiveForce<T,BUF_SIZE>*>(
                     tar.force.get()))));
         } else {
+            std::cout << static_cast<int>((tar.forceType)) << std::endl;
             assert(false && "unrecognized force type");
         }
     }
@@ -79,12 +82,15 @@ private:
     moodycamel::ReaderWriterQueue<SoundMessage<T, BUF_SIZE>> _queue_sound;
     moodycamel::ReaderWriterQueue<TransMessage<T>>           _queue_trans;
     SoundMessage<T, BUF_SIZE> _mess_sound;
-    ForceMessage<T, BUF_SIZE> _mess_force;
+    ForceMessage<T, BUF_SIZE> _mess_force; // buffer used to dequeue
     TransMessage<T>           _mess_trans; // buffer used to compute and enqueue
     TransMessage<T>           _latest_transfer;
     ModalIntegrator<T> *_integrator = nullptr;
     const int _N_modes;
     std::unique_ptr<std::map<int,FFAT_Map>> _ffat_maps;
+    std::list<ForceMessage<T, BUF_SIZE>> _activeForces;
+    Eigen::Matrix<T,-1,1> _forceSpreadBufferSpace;
+    Eigen::Matrix<T,BUF_SIZE,1> _forceSpreadBufferTime;
 
     std::mutex _useTransferMutex;
     bool _useTransfer;
@@ -100,12 +106,10 @@ public:
           _N_modes(N_modes),
           _useTransfer(true),
           _useTransferCache(true) {
+        _forceSpreadBufferSpace.resize(_N_modes);
     }
     inline void setIntegrator(ModalIntegrator<T> *integrator) {
         _integrator = integrator;
-    }
-    inline ForceMessage<T, BUF_SIZE> &getForceMessage() {
-        return _mess_force;
     }
     inline const TransMessage<T> &getLatestTransfer() {
         return _latest_transfer;
@@ -131,6 +135,30 @@ template<typename T, int BUF_SIZE>
 void ModalSolver<T, BUF_SIZE>::step(){
     // fetch one force message and process it, then step the ode in buffer
     bool success = dequeueForceMessage(_mess_force);
+    if (success) {
+        _activeForces.push_back(_mess_force);
+    }
+
+    // TODO get spread out force here
+    _forceSpreadBufferTime.setZero();
+    _forceSpreadBufferSpace.setZero();
+    auto it = _activeForces.begin();
+    while (it != _activeForces.end()) {
+        assert(it->force && "obsolete forces should be removed");
+        bool added = it->force->Add(_forceSpreadBufferTime);
+        // if force not producing anymore, kill it.
+        if (!added) {
+            _activeForces.erase(it++);
+        } else {
+            _forceSpreadBufferSpace += it->data;
+            ++it;
+        }
+    }
+    //if (_mess_force.force) {
+    //    _mess_force.force->Add(_forceSpreadBuffer);
+    //} else {
+    //    _forceSpreadBuffer.setZero();
+    //}
 
     TransMessage<T> trans;
     bool useTransfer = _useTransferCache;
@@ -148,34 +176,25 @@ void ModalSolver<T, BUF_SIZE>::step(){
     }
     _useTransferCache = useTransfer;
 
-    if (!success) { // use zero force
-        for (int ii=0; ii<BUF_SIZE; ++ii) {
-            const Eigen::Matrix<T,-1,1> &q =
-                _integrator->Step();
-            _mess_sound.data(ii) =
-                q.head(_latest_transfer.data.size()).dot(_latest_transfer.data);
-        }
-    } else {
-        assert(_mess_force.data.size() == _N_modes &&
+    //if (!success) { // use zero force
+    //    for (int ii=0; ii<BUF_SIZE; ++ii) {
+    //        const Eigen::Matrix<T,-1,1> &q =
+    //            _integrator->Step();
+    //        _mess_sound.data(ii) =
+    //            q.head(_latest_transfer.data.size()).dot(_latest_transfer.data);
+    //    }
+    //} else {
+        assert(_forceSpreadBufferSpace.size() == _N_modes &&
                "dimension of force message incorrect");
         for (int ii=0; ii<BUF_SIZE; ++ii) {
-            // TODO: turn force message into force data for each step in buf
-            // use force.data as placeholder
-            if (ii == 0) {
-                const Eigen::Matrix<T,-1,1> &q =
-                    _integrator->Step(_mess_force.data);
-                _mess_sound.data(ii) =
-                    q.head(_latest_transfer.data.size()).dot(
-                        _latest_transfer.data);
-            } else {
-                const Eigen::Matrix<T,-1,1> &q =
-                    _integrator->Step();
-                _mess_sound.data(ii) =
-                    q.head(_latest_transfer.data.size()).dot(
-                        _latest_transfer.data);
-            }
+            const Eigen::Matrix<T,-1,1> &q =
+                _integrator->Step(
+                    _forceSpreadBufferSpace*_forceSpreadBufferTime(ii));
+            _mess_sound.data(ii) =
+                q.head(_latest_transfer.data.size()).dot(
+                    _latest_transfer.data);
         }
-    }
+    //}
     // keep trying to enqueue until successful
     while (true) {
         success = enqueueSoundMessage(_mess_sound);
