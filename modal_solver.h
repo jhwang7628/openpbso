@@ -11,22 +11,43 @@
 #include "ffat_map_serialize.h"
 #include "forces.h"
 //##############################################################################
-template<typename T>
-struct ForceControl {
-    bool spreadOut = false;
-    float timeScale = 0.;
-};
-//##############################################################################
 template<typename T, int BUF_SIZE=FRAMES_PER_BUFFER>
 struct ForceMessage {
-    enum Type {
-        impulse
-    };
     Eigen::Matrix<T,-1,1> data;
-    static ForceControl<T> control;
+    ForceType forceType;
+    std::unique_ptr<Force<T,BUF_SIZE>> force;
+    ForceMessage() = default;
+    ForceMessage(const ForceMessage<T,BUF_SIZE> &tar)
+        : data(tar.data),
+          forceType(tar.forceType) {
+        _DeepCopyForce(tar);
+    }
+    ForceMessage<T,BUF_SIZE> &operator = (const ForceMessage<T,BUF_SIZE> &tar) {
+        if (&tar == this)
+            return *this;
+        // perform a deep copy
+        data = tar.data;
+        forceType = tar.forceType;
+        _DeepCopyForce(tar);
+        return *this;
+    }
+private:
+    void _DeepCopyForce(const ForceMessage<T,BUF_SIZE> &tar) {
+        if (forceType == ForceType::PointForce) {
+            force.reset(new PointForce<T,BUF_SIZE>(
+                *(static_cast<PointForce<T,BUF_SIZE>*>(tar.force.get()))));
+        } else if (forceType == ForceType::GaussianForce) {
+            force.reset(new GaussianForce<T,BUF_SIZE>(
+                *(static_cast<GaussianForce<T,BUF_SIZE>*>(tar.force.get()))));
+        } else if (forceType == ForceType::AutoregressiveForce) {
+            force.reset(new AutoregressiveForce<T,BUF_SIZE>(
+                *(static_cast<AutoregressiveForce<T,BUF_SIZE>*>(
+                    tar.force.get()))));
+        } else {
+            assert(false && "unrecognized force type");
+        }
+    }
 };
-template<typename T, int BUF_SIZE>
-ForceControl<T> ForceMessage<T,BUF_SIZE>::control;
 //##############################################################################
 template<typename T, int BUF_SIZE=FRAMES_PER_BUFFER>
 struct SoundMessage {
@@ -64,7 +85,6 @@ private:
     ModalIntegrator<T> *_integrator = nullptr;
     const int _N_modes;
     std::unique_ptr<std::map<int,FFAT_Map>> _ffat_maps;
-    GaussianForce<T, BUF_SIZE> _forces;
 
     std::mutex _useTransferMutex;
     bool _useTransfer;

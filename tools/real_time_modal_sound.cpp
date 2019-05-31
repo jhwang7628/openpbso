@@ -56,8 +56,10 @@ struct ViewerSettings {
     void incrementBufferHealthPtr() {
         bufferHealthPtr = (bufferHealthPtr+1)%100;
     }
+    static ForceType forceType;
 } VIEWER_SETTINGS;
 float ViewerSettings::renderFaceTime = 1.5f;
+ForceType ViewerSettings::forceType = ForceType::PointForce;
 //##############################################################################
 Eigen::Matrix<double,3,1> getCameraWorldPosition(
     const igl::opengl::glfw::Viewer &viewer) {
@@ -290,16 +292,19 @@ int main(int argc, char **argv) {
                     {VIEWER_SETTINGS.hitFidCache,
                     std::chrono::high_resolution_clock::now()});
             }
-            ForceControl<double> &forceControl = ForceMessage<double>::control;
-            ImGui::Checkbox("Spread out contact forces in time",
-                &forceControl.spreadOut);
-            if (!forceControl.spreadOut) {
+            static int force_type = 0;
+            static float time_scale = 0;
+            ImGui::RadioButton("point force", &force_type, 0); ImGui::SameLine();
+            ImGui::RadioButton("gaussian force", &force_type, 1); ImGui::SameLine();
+            ImGui::RadioButton("autoregressive force", &force_type, 2);
+            VIEWER_SETTINGS.forceType = static_cast<ForceType>(force_type);
+            if (VIEWER_SETTINGS.forceType != ForceType::GaussianForce) {
                 ImGui::PushStyleVar(
                     ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
             }
             ImGui::SliderFloat("width",
-                &forceControl.timeScale, 0.0f, 100.0f, "%.1f (ms)");
-            if (!forceControl.spreadOut) {
+                &time_scale, 0.0f, 100.0f, "%.1f (ms)");
+            if (VIEWER_SETTINGS.forceType != ForceType::GaussianForce) {
                 ImGui::PopStyleVar();
             }
             ImGui::EndChild();
