@@ -251,22 +251,6 @@ int main(int argc, char **argv) {
                     vn = VN.row(vid).normalized();
                     ForceMessage<double> force;
                     GetModalForceVertex(N_modesAudible, modes, vid, vn, force);
-                    // FIXME debug START
-                    //force.data.setZero(N_modesAudible);
-                    //for (int mm=0; mm<N_modesAudible; ++mm) {
-                    //    force.data(mm) = vn[0]*modes.mode(mm).at(vid*3+0)
-                    //                   + vn[1]*modes.mode(mm).at(vid*3+1)
-                    //                   + vn[2]*modes.mode(mm).at(vid*3+2);
-                    //}
-                    //force.forceType = VIEWER_SETTINGS.forceType;
-                    //if (force.forceType == ForceType::PointForce) {
-                    //    force.force.reset(new PointForce<double>());
-                    //}
-                    //else if (force.forceType == ForceType::GaussianForce) {
-                    //    force.force.reset(new GaussianForce<double>(
-                    //        VIEWER_SETTINGS.gaussianForceParameters.timeScale));
-                    //}
-                    // FIXME debug STOP
                     solver.enqueueForceMessage(force);
                     VIEWER_SETTINGS.hitForceCache = force;
                     VIEWER_SETTINGS.hitFidCache = fid;
