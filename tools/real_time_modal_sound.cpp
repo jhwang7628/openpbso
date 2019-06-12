@@ -106,6 +106,45 @@ void StepSolver(ModalSolver<T> &solver) {
     }
 }
 //##############################################################################
+template<typename T>
+void GetModalForceVertex(
+    const ForceMessage<T> &cache,
+    ForceMessage<T> &force) {
+    // perform a deep copy
+    force = cache;
+    force.forceType = VIEWER_SETTINGS.forceType;
+    if (force.forceType == ForceType::PointForce) {
+        force.force.reset(new PointForce<T>());
+    }
+    else if (force.forceType == ForceType::GaussianForce) {
+        force.force.reset(new GaussianForce<T>(
+                    VIEWER_SETTINGS.gaussianForceParameters.timeScale));
+    }
+}
+//##############################################################################
+template<typename T>
+void GetModalForceVertex(
+    const int forceDim,
+    const ModeData<T> &modes,
+    const int vid,
+    const Eigen::Vector3d &vn,
+    ForceMessage<double> &force) {
+    force.data.setZero(forceDim);
+    for (int mm=0; mm<forceDim; ++mm) {
+        force.data(mm) = vn[0]*modes.mode(mm).at(vid*3+0)
+            + vn[1]*modes.mode(mm).at(vid*3+1)
+            + vn[2]*modes.mode(mm).at(vid*3+2);
+    }
+    force.forceType = VIEWER_SETTINGS.forceType;
+    if (force.forceType == ForceType::PointForce) {
+        force.force.reset(new PointForce<T>());
+    }
+    else if (force.forceType == ForceType::GaussianForce) {
+        force.force.reset(new GaussianForce<T>(
+                    VIEWER_SETTINGS.gaussianForceParameters.timeScale));
+    }
+}
+//##############################################################################
 //##############################################################################
 int main(int argc, char **argv) {
     auto *parser = CreateParser(argc, argv);
@@ -211,20 +250,23 @@ int main(int argc, char **argv) {
                     if (bc[2] > lar) vid = F(fid, 2);
                     vn = VN.row(vid).normalized();
                     ForceMessage<double> force;
-                    force.data.setZero(N_modesAudible);
-                    for (int mm=0; mm<N_modesAudible; ++mm) {
-                        force.data(mm) = vn[0]*modes.mode(mm).at(vid*3+0)
-                                       + vn[1]*modes.mode(mm).at(vid*3+1)
-                                       + vn[2]*modes.mode(mm).at(vid*3+2);
-                    }
-                    force.forceType = VIEWER_SETTINGS.forceType;
-                    if (force.forceType == ForceType::PointForce) {
-                        force.force.reset(new PointForce<double>());
-                    }
-                    else if (force.forceType == ForceType::GaussianForce) {
-                        force.force.reset(new GaussianForce<double>(
-                            VIEWER_SETTINGS.gaussianForceParameters.timeScale));
-                    }
+                    GetModalForceVertex(N_modesAudible, modes, vid, vn, force);
+                    // FIXME debug START
+                    //force.data.setZero(N_modesAudible);
+                    //for (int mm=0; mm<N_modesAudible; ++mm) {
+                    //    force.data(mm) = vn[0]*modes.mode(mm).at(vid*3+0)
+                    //                   + vn[1]*modes.mode(mm).at(vid*3+1)
+                    //                   + vn[2]*modes.mode(mm).at(vid*3+2);
+                    //}
+                    //force.forceType = VIEWER_SETTINGS.forceType;
+                    //if (force.forceType == ForceType::PointForce) {
+                    //    force.force.reset(new PointForce<double>());
+                    //}
+                    //else if (force.forceType == ForceType::GaussianForce) {
+                    //    force.force.reset(new GaussianForce<double>(
+                    //        VIEWER_SETTINGS.gaussianForceParameters.timeScale));
+                    //}
+                    // FIXME debug STOP
                     solver.enqueueForceMessage(force);
                     VIEWER_SETTINGS.hitForceCache = force;
                     VIEWER_SETTINGS.hitFidCache = fid;
@@ -298,7 +340,9 @@ int main(int argc, char **argv) {
                 ImVec2(220, 140),
                 true);
             if (ImGui::Button("Repeat hit")) {
-                solver.enqueueForceMessage(VIEWER_SETTINGS.hitForceCache);
+                ForceMessage<double> force;
+                GetModalForceVertex(VIEWER_SETTINGS.hitForceCache, force);
+                solver.enqueueForceMessage(force);
                 VIEWER_SETTINGS.activeFaceIds.push_back(
                     {VIEWER_SETTINGS.hitFidCache,
                     std::chrono::high_resolution_clock::now()});

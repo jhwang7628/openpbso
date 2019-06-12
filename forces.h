@@ -33,7 +33,6 @@ public:
     GaussianForce(const T width)
         : _width(width) {
         _widthSamples = std::max(1, (int)(_width/1000000.*SAMPLE_RATE));
-        std::cout << "width samples = " << _widthSamples << std::endl; // FIXME debug
         _center = (int)((_cutoff-0.5) * _widthSamples);
     }
     bool Add(Eigen::Matrix<T,BUF_SIZE,1> &forceSpread) override;
@@ -65,15 +64,6 @@ bool GaussianForce<T, BUF_SIZE>::Add(
     for (int ii=0; ii<BUF_SIZE; ++ii) {
         const T p =
             -(T)0.5 * std::pow((T)(_count+ii-_center)/(T)_widthSamples, 2);
-        //// FIXME debug START
-        //std::cout << "ii = " << ii << std::endl;
-        //std::cout << (_count+ii-_center) << std::endl;
-        //std::cout << _widthSamples << std::endl;
-        //std::cout << std::pow((T)(_count+ii-_center)/(T)_widthSamples, 2) << std::endl;
-        //std::cout << p << std::endl;
-        //std::cout << std::exp(p) << std::endl;
-        //// FIXME debug STOP
-        std::cout << std::exp(p) << std::endl;
         forceSpread(ii) += std::exp(p);
     }
     _count += BUF_SIZE;
