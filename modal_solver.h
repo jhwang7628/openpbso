@@ -123,12 +123,16 @@ public:
     void step();
     void readFFATMaps(const std::string &mapFolderPath);
     bool computeTransfer(const Eigen::Matrix<T,3,1> &pos);
+    bool computeTransfer(const Eigen::Matrix<T,3,1> &pos, TransMessage<T> &t);
     bool enqueueForceMessage(const ForceMessage<T, BUF_SIZE> &mess);
     bool dequeueForceMessage(ForceMessage<T, BUF_SIZE> &mess);
     bool enqueueSoundMessage(const SoundMessage<T, BUF_SIZE> &mess);
     bool dequeueSoundMessage(SoundMessage<T, BUF_SIZE> &mess);
     bool enqueueTransMessage(const TransMessage<T> &mess);
     bool dequeueTransMessage(TransMessage<T> &mess);
+    const SoundMessage<T, BUF_SIZE> *peekSoundQueue() {
+        return _queue_sound.peek();
+    }
 };
 //##############################################################################
 template<typename T, int BUF_SIZE>
@@ -214,18 +218,27 @@ void ModalSolver<T, BUF_SIZE>::readFFATMaps(const std::string &mapPath) {
 //##############################################################################
 template<typename T, int BUF_SIZE>
 bool ModalSolver<T, BUF_SIZE>::computeTransfer(
-    const Eigen::Matrix<T,3,1> &pos) {
+    const Eigen::Matrix<T,3,1> &pos,
+    TransMessage<T> &trans) {
     // if no transfer maps are given, return immediately (and use all ones)
     if (!_ffat_maps)
         return false;
-    const int N = _mess_trans.data.size();
+    const int N = trans.data.size();
     for (int ii=0; ii<N; ++ii) {
-        _mess_trans.data(ii) = std::abs(
-            _ffat_maps->at(ii).GetMapVal(pos, _mess_trans.useCompressed));
+        trans.data(ii) = std::abs(
+            _ffat_maps->at(ii).GetMapVal(pos, trans.useCompressed));
     }
-    // this might fail, if fail then skip this update
-    bool success = enqueueTransMessage(_mess_trans);
-    return success;
+    return true;
+}
+//##############################################################################
+template<typename T, int BUF_SIZE>
+bool ModalSolver<T, BUF_SIZE>::computeTransfer(
+    const Eigen::Matrix<T,3,1> &pos) {
+    bool success = computeTransfer(pos, _mess_trans);
+    if (!success || !enqueueTransMessage(_mess_trans)) {
+        return false;
+    }
+    return true;
 }
 //##############################################################################
 template<typename T, int BUF_SIZE>

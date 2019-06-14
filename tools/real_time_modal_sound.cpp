@@ -65,8 +65,7 @@ float ViewerSettings::renderFaceTime = 1.5f;
 ForceType ViewerSettings::forceType = ForceType::PointForce;
 //##############################################################################
 Eigen::Matrix<double,3,1> getCameraWorldPosition(
-    const igl::opengl::glfw::Viewer &viewer) {
-    auto &core = viewer.core;
+    igl::opengl::ViewerCore &core) {
     Eigen::Matrix<float,4,1> eye;
     eye << core.camera_eye, 1.0f;
     const Eigen::Matrix<double,3,1> camera_pos =
@@ -220,7 +219,22 @@ int main(int argc, char **argv) {
 
     // Plot the mesh
     igl::opengl::glfw::Viewer viewer;
-    viewer.core.is_animating = true;
+    viewer.core().is_animating = true;
+    unsigned int main_view, hud_view;
+    viewer.callback_init = [&](
+            igl::opengl::glfw::Viewer &viewer) {
+        viewer.core().viewport = Eigen::Vector4f(0, 0, 1280, 800);
+        main_view = viewer.core_list[0].id;
+        hud_view = viewer.append_core(Eigen::Vector4f(-50, 0, 400, (int)(400*800./1280.)));
+        viewer.core(hud_view).update_transform_matrices = false;
+        return false;
+    };
+    viewer.callback_post_resize = [&](
+            igl::opengl::glfw::Viewer &v, int w, int h) {
+        v.core(main_view).viewport = Eigen::Vector4f(0, 0, w, h);
+        v.core(hud_view).viewport = Eigen::Vector4f(-50, 0, 400, (int)(400*800./1280.));
+        return true;
+    };
     C = Eigen::MatrixXd::Constant(F.rows(),3,1);
     viewer.callback_mouse_down =
         [&V,&F,&C,&modes,&VN,&solver,&N_modesAudible](
@@ -233,10 +247,10 @@ int main(int argc, char **argv) {
                 // Cast a ray in the view direction starting from the mouse
                 // position
                 double x = viewer.current_mouse_x;
-                double y = viewer.core.viewport(3) - viewer.current_mouse_y;
+                double y = viewer.core().viewport(3) - viewer.current_mouse_y;
                 if(igl::unproject_onto_mesh(
-                    Eigen::Vector2f(x,y), viewer.core.view,
-                    viewer.core.proj, viewer.core.viewport, V, F, fid, bc)) {
+                    Eigen::Vector2f(x,y), viewer.core().view,
+                    viewer.core().proj, viewer.core().viewport, V, F, fid, bc)){
                     // paint hit red
                     //C.row(fid)<<1,0,0;
                     VIEWER_SETTINGS.activeFaceIds.push_back(
@@ -267,7 +281,7 @@ int main(int argc, char **argv) {
     menu.callback_draw_viewer_menu = [&]()
     {
         // viewer menu
-        //menu.draw_viewer_menu();
+        menu.draw_viewer_menu();
 
         // simulation menu
         ImGui::SetNextWindowPos(ImVec2(0,0));
@@ -382,7 +396,7 @@ int main(int argc, char **argv) {
                 VIEWER_SETTINGS.useTransferCache) {
                 solver.setUseTransfer(VIEWER_SETTINGS.useTransfer);
                 solver.computeTransfer(
-                    getCameraWorldPosition(viewer));
+                    getCameraWorldPosition(viewer.core(main_view)));
                 VIEWER_SETTINGS.useTransferCache = VIEWER_SETTINGS.useTransfer;
             }
             ImGui::Text("Transfer values for different modes:");
@@ -400,6 +414,38 @@ int main(int argc, char **argv) {
     viewer.data().set_colors(C);
     viewer.data().show_lines = false;
     viewer.data().set_face_based(true);
+    // preparing for the HUD
+    Eigen::MatrixXd V_ball, C_ball;
+    Eigen::MatrixXi F_ball;
+    // FIXME debug: this won't work outside the build directory.
+    // should probably hard code the ball or use cmake to communicate the
+    // base dir
+    igl::read_triangle_mesh("../assets/ball.obj", V_ball, F_ball);
+    C_ball.setOnes(V_ball.rows(), 3);
+    // TODO
+    const SoundMessage<double> *sound = solver.peekSoundQueue();
+    Eigen::Vector3d pos;
+    TransMessage<double> transfer;
+    double val;
+    const double sound_power = sound->data.norm();
+    std::cout << "sound power = " << sound_power << std::endl;
+    if (sound) {
+        for (int ii=0; ii<V_ball.rows(); ++ii) {
+            pos = V_ball.row(ii);
+            solver.computeTransfer(pos, transfer);
+            val = transfer.data(0) * sound_power;
+            C_ball.row(ii) << val, val, val;
+        }
+    }
+
+    viewer.append_mesh();
+    viewer.data().set_mesh(V_ball, F_ball);
+    viewer.data().show_lines = false;
+    viewer.data().set_face_based(true);
+    viewer.data().set_colors(Eigen::RowVector3d(0,0,1));
+    viewer.data().shininess = 500.0f;
+    viewer.selected_data_index = 0;
+    viewer.data(1).set_visible(false, main_view);
     viewer.callback_pre_draw =
         [&](igl::opengl::glfw::Viewer &viewer) {
             auto &queue = VIEWER_SETTINGS.activeFaceIds;
@@ -427,12 +473,56 @@ int main(int argc, char **argv) {
                     C.row(it->first)<<1.f,blend,1.f;
                 }
             }
-            // TODO send only the needed rows
             viewer.data().set_colors(C);
+            viewer.data(1).set_colors(C_ball);
+
+
+            // handling the matrices myself
+            auto &core = viewer.core(main_view);
+            auto &core_hud = viewer.core(hud_view);
+    		core_hud.view = Eigen::Matrix4f::Identity();
+    		core_hud.proj = Eigen::Matrix4f::Identity();
+    		core_hud.norm = Eigen::Matrix4f::Identity();
+
+    		float width  = core_hud.viewport(2);
+    		float height = core_hud.viewport(3);
+
+    		// Set view
+            igl::look_at(core.camera_eye, core.camera_center, core.camera_up,
+                    core_hud.view);
+    		core_hud.view = core_hud.view
+    		  * (core.trackball_angle
+                      * Eigen::Scaling(0.1f * core.camera_base_zoom)
+    		  * Eigen::Translation3f(core.camera_translation
+                  + core.camera_base_translation)).matrix();
+    		core_hud.norm = core_hud.view.inverse().transpose();
+
+    		// Set projection
+    		if (core.orthographic)
+    		{
+    		  float length = (core.camera_eye - core.camera_center).norm();
+    		  float h = tan(core.camera_view_angle/360.0 * igl::PI) * (length);
+              igl::ortho(-h*width/height, h*width/height, -h, h, core.camera_dnear, core.camera_dfar,core_hud.proj);
+    		}
+    		else
+    		{
+    		  float fH = tan(core.camera_view_angle / 360.0 * igl::PI) * core.camera_dnear;
+    		  float fW = fH * (double)width/(double)height;
+              igl::frustum(-fW, fW, -fH, fH, core.camera_dnear, core.camera_dfar, core_hud.proj);
+    		}
+
+
+
+
+
+
+            //viewer.core(hud_view).view = viewer.core(main_view).view;
+            //viewer.core(hud_view).proj = viewer.core(main_view).proj;
+            //viewer.core(hud_view).norm = viewer.core(main_view).norm;
             return false;
         };
     viewer.callback_post_draw =
-        [&stream, &solver](igl::opengl::glfw::Viewer &viewer) {
+        [&](igl::opengl::glfw::Viewer &viewer) {
             if (!PA_STREAM_STARTED) {
                 CHECK_PA_LAUNCH(Pa_StartStream(stream));
                 PA_STREAM_STARTED = true;
@@ -440,7 +530,7 @@ int main(int argc, char **argv) {
             // update the transfer
             static Eigen::Matrix<double,3,1> last_camera_pos;
             const Eigen::Matrix<double,3,1> camera_pos =
-                getCameraWorldPosition(viewer);
+                getCameraWorldPosition(viewer.core(main_view));
             static bool cache_initialize = false;
             if (camera_pos != last_camera_pos || !cache_initialize) {
                 solver.computeTransfer(camera_pos);
@@ -449,6 +539,8 @@ int main(int argc, char **argv) {
             }
             return false;
         };
+
+
     viewer.launch();
     CHECK_PA_LAUNCH(Pa_StopStream(stream));
     CHECK_PA_LAUNCH(Pa_CloseStream(stream));
