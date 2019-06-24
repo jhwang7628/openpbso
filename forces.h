@@ -1,5 +1,6 @@
 #ifndef FORCES_H
 #define FORCES_H
+#include <random>
 //##############################################################################
 enum class ForceType {
     PointForce = 0,
@@ -11,6 +12,7 @@ template<typename T, int BUF_SIZE=FRAMES_PER_BUFFER>
 class Force {
 public:
     virtual bool Add(Eigen::Matrix<T,BUF_SIZE,1> &forceSpread) = 0;
+    virtual ~Force() = default;
 };
 //##############################################################################
 template<typename T, int BUF_SIZE=FRAMES_PER_BUFFER>
@@ -38,10 +40,35 @@ public:
     bool Add(Eigen::Matrix<T,BUF_SIZE,1> &forceSpread) override;
 };
 //##############################################################################
+template<typename T>
+struct AutoregressiveForceParam {
+    std::vector<T> a = {0.783, 0.116};
+    T sigma = 0.00148;
+    T mu = 0.142;
+};
+//##############################################################################
+// Paper:
+//  Pai et al. Scanning Physical Interaction Behavior of 3D Objects, 2001
+//##############################################################################
 template<typename T, int BUF_SIZE=FRAMES_PER_BUFFER>
 class AutoregressiveForce : public Force<T,BUF_SIZE>{
+private:
+    std::vector<T> _buf;
+    const int _bufLen;
+    int _bufIdx = 0;
+    std::vector<T> _a;
+    T _sigma;
+    T _mu;
+    std::default_random_engine _generator;
+    std::normal_distribution<T> _distribution; // mean 0.0, stddev 1.0
+    T GetMuEffective();
 public:
+    AutoregressiveForce()
+        : _buf{0,0,0}, _bufLen(_buf.size()),
+          _a{0.783,0.116}, _sigma(0.00148), _mu(0.142) {
+    }
     bool Add(Eigen::Matrix<T,BUF_SIZE,1> &forceSpread) override;
+    void SetParam(const AutoregressiveForceParam<T> &param);
 };
 //##############################################################################
 template<typename T, int BUF_SIZE>
@@ -71,9 +98,35 @@ bool GaussianForce<T, BUF_SIZE>::Add(
 }
 //##############################################################################
 template<typename T, int BUF_SIZE>
+T AutoregressiveForce<T, BUF_SIZE>::GetMuEffective() {
+    T mu_tilde = (T)0.0;
+    for (int ii=0; ii<2; ++ii) {
+        mu_tilde += _a.at(ii) * _buf.at((_bufIdx+_bufLen-ii-1)%_bufLen);
+    }
+    mu_tilde += _sigma * _distribution(_generator);
+    _buf.at(_bufIdx) = mu_tilde;
+    _bufIdx = (_bufIdx+1) % _bufLen;
+    return _mu + mu_tilde;
+}
+//##############################################################################
+template<typename T, int BUF_SIZE>
 bool AutoregressiveForce<T, BUF_SIZE>::Add(
     Eigen::Matrix<T,BUF_SIZE,1> &forceSpread) {
-    return false;
+    T mu_e;
+    for (int ii=0; ii<BUF_SIZE; ++ii) {
+        mu_e = GetMuEffective();
+        forceSpread(ii) += mu_e;
+    }
+    return true;
+}
+//##############################################################################
+template<typename T, int BUF_SIZE>
+void AutoregressiveForce<T, BUF_SIZE>::SetParam(
+    const AutoregressiveForceParam<T> &param) {
+    _buf = {0,0,0};
+    _a = param.a;
+    _sigma = param.sigma;
+    _mu = param.mu;
 }
 //##############################################################################
 #endif

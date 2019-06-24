@@ -15,11 +15,11 @@ buf_idx = 0
 
 data = []
 for ii in range(200):
-    print ii
     mu_tilde = GetMuTilde(buf, buf_idx, a, sigma)
-    buf_idx = (buf_idx+1) % (len(a)+1)
     # data.append(mu + mu_tilde)
+    # buf[buf_idx] = mu_tilde
     data.append(mu_tilde)
+    buf_idx = (buf_idx+1) % (len(a)+1)
 data = np.array(data)
 plt.figure()
 plt.plot(data, '-x')

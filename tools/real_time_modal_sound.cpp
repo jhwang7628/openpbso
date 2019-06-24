@@ -11,6 +11,7 @@
 #include "igl/opengl/glfw/Viewer.h"
 #include "igl/opengl/glfw/imgui/ImGuiMenu.h"
 #include "igl/opengl/glfw/imgui/ImGuiHelpers.h"
+#include "igl/colormap.h"
 #include "imgui/imgui.h"
 #include "config.h"
 #include "ModalMaterial.h"
@@ -19,6 +20,7 @@
 #include "portaudio.h"
 #include "modal_integrator.h"
 #include "modal_solver.h"
+#include "forces.h"
 //##############################################################################
 static bool PA_STREAM_STARTED = false;
 //##############################################################################
@@ -53,6 +55,11 @@ struct ViewerSettings {
         std::chrono::high_resolution_clock>>> activeFaceIds;
     ForceMessage<double> hitForceCache;
     int hitFidCache = 0;
+    int hitVidCache = 0;
+    bool newHit = false;
+    float transferBallNormalization = 0.15;
+    float transferBallBufThres = 200.;
+    bool sustainedForceActive = false;
     void incrementBufferHealthPtr() {
         bufferHealthPtr = (bufferHealthPtr+1)%100;
     }
@@ -60,6 +67,17 @@ struct ViewerSettings {
     struct GaussianForceParameters {
         float timeScale;
     } gaussianForceParameters;
+    struct ARForceParameters {
+        Eigen::Vector3d past_surf_pos;
+        Eigen::Vector3d curr_surf_pos;
+        Eigen::Vector3d curr_surf_vel;
+        bool past_mouse_init = false;
+        double time_step_size = 1./60.;
+        float mu_f = 0.142;
+        float a_f[2] = {0.783, 0.116};
+        float sigma_f = 0.00148;
+        AutoregressiveForceParam<double> arprm;
+    } arForceParameters;
 } VIEWER_SETTINGS;
 float ViewerSettings::renderFaceTime = 1.5f;
 ForceType ViewerSettings::forceType = ForceType::PointForce;
@@ -71,6 +89,33 @@ Eigen::Matrix<double,3,1> getCameraWorldPosition(
     const Eigen::Matrix<double,3,1> camera_pos =
         (core.view.inverse() * eye).cast<double>().head(3);
     return camera_pos;
+}
+//##############################################################################
+bool CurrentMouseSurfPos(
+    igl::opengl::glfw::Viewer &viewer,
+    const Eigen::MatrixXd &V,
+    const Eigen::MatrixXi &F,
+    Eigen::Vector3d &pos, int &fid, int &vid) {
+    const double x = viewer.current_mouse_x;
+    const double y = viewer.core().viewport(3) - viewer.current_mouse_y;
+    Eigen::Vector3f bc;
+    if(igl::unproject_onto_mesh(
+        Eigen::Vector2f(x,y), viewer.core().view,
+        viewer.core().proj, viewer.core().viewport, V, F, fid, bc)) {
+        vid = F(fid, 0);
+        float lar = bc[0];
+        if (bc[1] > bc[0]) {
+            vid = F(fid, 1);
+            lar = bc[1];
+        }
+        if (bc[2] > lar) vid = F(fid, 2);
+        pos = V.row(F(fid,0))*bc[0]
+            + V.row(F(fid,1))*bc[1]
+            + V.row(F(fid,2))*bc[2];
+        vid = 0; // FIXME debug // TODO interp the vid
+        return true;
+    }
+    return false;
 }
 //##############################################################################
 struct PaModalData {
@@ -119,6 +164,12 @@ void GetModalForceVertex(
         force.force.reset(new GaussianForce<T>(
                     VIEWER_SETTINGS.gaussianForceParameters.timeScale));
     }
+    else if (force.forceType == ForceType::AutoregressiveForce) {
+        force.force.reset(new AutoregressiveForce<T>());
+    }
+    else {
+        assert(false && "Force type not defined");
+    }
 }
 //##############################################################################
 template<typename T>
@@ -141,6 +192,12 @@ void GetModalForceVertex(
     else if (force.forceType == ForceType::GaussianForce) {
         force.force.reset(new GaussianForce<T>(
                     VIEWER_SETTINGS.gaussianForceParameters.timeScale));
+    }
+    else if (force.forceType == ForceType::AutoregressiveForce) {
+        force.force.reset(new AutoregressiveForce<T>());
+    }
+    else {
+        assert(false && "Force type not defined");
     }
 }
 //##############################################################################
@@ -225,63 +282,82 @@ int main(int argc, char **argv) {
             igl::opengl::glfw::Viewer &viewer) {
         viewer.core().viewport = Eigen::Vector4f(0, 0, 1280, 800);
         main_view = viewer.core_list[0].id;
-        hud_view = viewer.append_core(Eigen::Vector4f(-50, 0, 400, (int)(400*800./1280.)));
+        viewer.append_core(Eigen::Vector4f(800, 0, 480, 480));
+        hud_view = viewer.core_list[1].id;
         viewer.core(hud_view).update_transform_matrices = false;
+        const int obj_id = viewer.data_list[0].id;
+        const int sph_id = viewer.data_list[1].id;
+        viewer.data(sph_id).set_visible(false,main_view);
+        viewer.data(obj_id).set_visible(false, hud_view);
         return false;
     };
     viewer.callback_post_resize = [&](
             igl::opengl::glfw::Viewer &v, int w, int h) {
         v.core(main_view).viewport = Eigen::Vector4f(0, 0, w, h);
-        v.core(hud_view).viewport = Eigen::Vector4f(-50, 0, 400, (int)(400*800./1280.));
+        v.core(hud_view).viewport = Eigen::Vector4f(w-480, 0, 480, 480);
         return true;
     };
     C = Eigen::MatrixXd::Constant(F.rows(),3,1);
     viewer.callback_mouse_down =
-        [&V,&F,&C,&modes,&VN,&solver,&N_modesAudible](
+        [&](
             igl::opengl::glfw::Viewer& viewer, int, int modifier)->bool {
-            if (modifier == GLFW_MOD_SHIFT) {
-                int fid, vid;
-                Eigen::Vector3f bc;
-                Eigen::Vector3d vn;
-                Eigen::RowVector3d hp;
-                // Cast a ray in the view direction starting from the mouse
-                // position
-                double x = viewer.current_mouse_x;
-                double y = viewer.core().viewport(3) - viewer.current_mouse_y;
-                if(igl::unproject_onto_mesh(
-                    Eigen::Vector2f(x,y), viewer.core().view,
-                    viewer.core().proj, viewer.core().viewport, V, F, fid, bc)){
-                    // paint hit red
-                    //C.row(fid)<<1,0,0;
+            int fid, vid;
+            Eigen::Vector3f bc;
+            Eigen::Vector3d vn, pos;
+            // Cast a ray in the view direction starting from the mouse
+            // position
+            if (CurrentMouseSurfPos(viewer, V, F, pos, fid, vid)) {
+                VIEWER_SETTINGS.arForceParameters.curr_surf_pos = pos;
+                if (modifier == GLFW_MOD_SHIFT) {
                     VIEWER_SETTINGS.activeFaceIds.push_back(
-                        {fid,std::chrono::high_resolution_clock::now()});
-                    vid = F(fid, 0);
-                    float lar = bc[0];
-                    if (bc[1] > bc[0]) {
-                        vid = F(fid, 1);
-                        lar = bc[1];
-                    }
-                    if (bc[2] > lar) vid = F(fid, 2);
+                            {fid,std::chrono::high_resolution_clock::now()});
                     vn = VN.row(vid).normalized();
                     ForceMessage<double> force;
                     GetModalForceVertex(N_modesAudible, modes, vid, vn, force);
                     solver.enqueueForceMessage(force);
                     VIEWER_SETTINGS.hitForceCache = force;
                     VIEWER_SETTINGS.hitFidCache = fid;
-                    hp = V.row(vid);
+                    if (VIEWER_SETTINGS.hitVidCache != vid) {
+                        VIEWER_SETTINGS.newHit = true;
+                    }
+                    VIEWER_SETTINGS.hitVidCache = vid;
                     viewer.data().set_colors(C);
                     return true;
                 }
             }
             return false;
         };
+    viewer.callback_mouse_up = [&](
+        igl::opengl::glfw::Viewer &viewer, int, int)->bool {
+        auto &ar_parm = VIEWER_SETTINGS.arForceParameters;
+        ar_parm.curr_surf_vel.setZero();
+        ForceMessage<double> force;
+        GetModalForceVertex(N_modesAudible, modes, 0,
+            ar_parm.curr_surf_vel, force);
+        while (true) {
+            if (solver.enqueueForceMessage(force)) {
+                break;
+            }
+        }
+        return false;
+    };
+    viewer.callback_mouse_move = [&](
+        igl::opengl::glfw::Viewer &viewer, int, int)->bool {
+        if (!viewer.down) {
+            VIEWER_SETTINGS.arForceParameters.past_mouse_init = false;
+        }
+        if (VIEWER_SETTINGS.sustainedForceActive) {
+            return true;
+        }
+        return false;
+    };
 
     igl::opengl::glfw::imgui::ImGuiMenu menu;
     viewer.plugins.push_back(&menu);
     menu.callback_draw_viewer_menu = [&]()
     {
         // viewer menu
-        menu.draw_viewer_menu();
+        //menu.draw_viewer_menu();
 
         // simulation menu
         ImGui::SetNextWindowPos(ImVec2(0,0));
@@ -346,10 +422,45 @@ int main(int argc, char **argv) {
                     std::chrono::high_resolution_clock::now()});
             }
             static int force_type = 0;
+            static int old_force_type = 0;
             ImGui::RadioButton("Point force", &force_type, 0);
             ImGui::RadioButton("Gaussian force", &force_type, 1);
             ImGui::RadioButton("Autoregressive force", &force_type, 2);
             VIEWER_SETTINGS.forceType = static_cast<ForceType>(force_type);
+            if (force_type == 2) {
+                if (!VIEWER_SETTINGS.sustainedForceActive) {
+                    VIEWER_SETTINGS.sustainedForceActive = true;
+                    // send a dummy start signal
+                    ForceMessage<double> force;
+                    force.sustainedForceStart = true;
+                    GetModalForceVertex(
+                        N_modesAudible, modes, 0, Eigen::Vector3d::Zero(), force);
+                    while (true) {
+                        bool succ = solver.enqueueForceMessage(force);
+                        if (succ) {
+                            break;
+                        }
+                    }
+                }
+            } else {
+                if (old_force_type == 2 &&
+                    VIEWER_SETTINGS.sustainedForceActive) {
+                    // send a dummy end signal
+                    ForceMessage<double> force;
+                    force.sustainedForceEnd = true;
+                    GetModalForceVertex(
+                        N_modesAudible, modes, 0, Eigen::Vector3d::Zero(),
+                        force);
+                    while (true) {
+                        bool succ = solver.enqueueForceMessage(force);
+                        if (succ) {
+                            break;
+                        }
+                    }
+                }
+                VIEWER_SETTINGS.sustainedForceActive = false;
+            }
+            old_force_type = force_type;
             // gaussian force parameters
             if (VIEWER_SETTINGS.forceType != ForceType::GaussianForce) {
                 ImGui::PushStyleVar(
@@ -366,6 +477,32 @@ int main(int argc, char **argv) {
                     /1000000.*SAMPLE_RATE));
             ImGui::SameLine(); ImGui::Text("(%d)", width_samples);
             if (VIEWER_SETTINGS.forceType != ForceType::GaussianForce) {
+                ImGui::PopStyleVar();
+            }
+            if (VIEWER_SETTINGS.forceType != ForceType::AutoregressiveForce) {
+                ImGui::PushStyleVar(
+                    ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+            }
+            auto &ar = VIEWER_SETTINGS.arForceParameters;
+            ImGui::DragFloat("mu", &ar.mu_f, 0.1, 0.0, 1);
+            ImGui::DragFloat("a1", &ar.a_f[0], 0.1, 0.0, 1.0);
+            ImGui::DragFloat("a2", &ar.a_f[1], 0.1, 0.0, 1.0);
+            ImGui::DragFloat("sigma", &ar.sigma_f, 0.1, 0.0, 1.0);
+            if (ar.arprm.mu != (double)ar.mu_f ||
+                ar.arprm.a[0] != (double)ar.a_f[0] ||
+                ar.arprm.a[1] != (double)ar.a_f[1] ||
+                ar.arprm.sigma != (double)ar.sigma_f) {
+                ar.arprm.mu = (double)ar.mu_f;
+                ar.arprm.a = {(double)ar.a_f[0], (double)ar.a_f[1]};
+                ar.arprm.sigma = (double)ar.sigma_f;
+                while (true) {
+                    if (solver.enqueueArprmMessage(ar.arprm)) {
+                        std::cout << "enqueue arprm\n";
+                        break;
+                    }
+                }
+            }
+            if (VIEWER_SETTINGS.forceType != ForceType::AutoregressiveForce) {
                 ImGui::PopStyleVar();
             }
             ImGui::EndChild();
@@ -405,6 +542,17 @@ int main(int argc, char **argv) {
                 solver.getLatestTransfer().data.size(),
                 0, nullptr, 0.0f, 1.0f, ImVec2(200, 80));
             ImGui::EndChild();
+            ImGui::BeginChild(
+                "TransferVis",
+                ImVec2(220, 60),
+                true);
+            ImGui::DragFloat("norma val",
+                    &VIEWER_SETTINGS.transferBallNormalization,
+                    0.01, 0.001, 10.0);
+            ImGui::DragFloat("thres val",
+                    &VIEWER_SETTINGS.transferBallBufThres,
+                    1., 1., 10000.);
+            ImGui::EndChild();
             ImGui::Text("this is the next line");
 		}
         ImGui::End();
@@ -416,27 +564,12 @@ int main(int argc, char **argv) {
     viewer.data().set_face_based(true);
     // preparing for the HUD
     Eigen::MatrixXd V_ball, C_ball;
+    Eigen::VectorXd transferVals;
     Eigen::MatrixXi F_ball;
     // FIXME debug: this won't work outside the build directory.
     // should probably hard code the ball or use cmake to communicate the
     // base dir
     igl::read_triangle_mesh("../assets/ball.obj", V_ball, F_ball);
-    C_ball.setOnes(V_ball.rows(), 3);
-    // TODO
-    const SoundMessage<double> *sound = solver.peekSoundQueue();
-    Eigen::Vector3d pos;
-    TransMessage<double> transfer;
-    double val;
-    const double sound_power = sound->data.norm();
-    std::cout << "sound power = " << sound_power << std::endl;
-    if (sound) {
-        for (int ii=0; ii<V_ball.rows(); ++ii) {
-            pos = V_ball.row(ii);
-            solver.computeTransfer(pos, transfer);
-            val = transfer.data(0) * sound_power;
-            C_ball.row(ii) << val, val, val;
-        }
-    }
 
     viewer.append_mesh();
     viewer.data().set_mesh(V_ball, F_ball);
@@ -445,7 +578,20 @@ int main(int argc, char **argv) {
     viewer.data().set_colors(Eigen::RowVector3d(0,0,1));
     viewer.data().shininess = 500.0f;
     viewer.selected_data_index = 0;
-    viewer.data(1).set_visible(false, main_view);
+    // get transfer values on the ball
+    transferVals.setOnes(V_ball.rows());
+    transferVals *= 0.1;
+    igl::colormap(
+            igl::COLOR_MAP_TYPE_JET,transferVals,true,C_ball);
+    Eigen::Vector3d pos;
+    Eigen::MatrixXd transfer_ball;
+    transfer_ball.setZero(N_modesAudible, V_ball.rows());
+    for (int ii=0; ii<V_ball.rows(); ++ii) {
+        pos = V_ball.row(ii);
+        solver.computeTransfer(pos,
+            transfer_ball.data()+ii*N_modesAudible);
+    }
+    transfer_ball /= transfer_ball.maxCoeff();
     viewer.callback_pre_draw =
         [&](igl::opengl::glfw::Viewer &viewer) {
             auto &queue = VIEWER_SETTINGS.activeFaceIds;
@@ -474,9 +620,28 @@ int main(int argc, char **argv) {
                 }
             }
             viewer.data().set_colors(C);
+            // set ball color
+            if (VIEWER_SETTINGS.newHit) {
+                Eigen::VectorXd power;
+                int ite = 0;
+                while (ite++ < 5) {
+                    power = solver.getQBufferNorm();
+                    if (power.norm() > VIEWER_SETTINGS.transferBallBufThres) {
+                        VIEWER_SETTINGS.newHit = false;
+                        break;
+                    }
+                }
+                transferVals = Eigen::VectorXd::Ones(transferVals.size())*0.1;
+                for (int ii=0; ii<V_ball.rows(); ++ii) {
+                    double &val = transferVals(ii);
+                    val = 0.1*std::log10(power.dot(transfer_ball.col(ii)));
+                    val /= VIEWER_SETTINGS.transferBallNormalization;
+                    val = std::max(0.1, std::min(1.0, val));
+                }
+                igl::colormap(
+                    igl::COLOR_MAP_TYPE_JET,transferVals,true,C_ball);
+            }
             viewer.data(1).set_colors(C_ball);
-
-
             // handling the matrices myself
             auto &core = viewer.core(main_view);
             auto &core_hud = viewer.core(hud_view);
@@ -491,8 +656,7 @@ int main(int argc, char **argv) {
             igl::look_at(core.camera_eye, core.camera_center, core.camera_up,
                     core_hud.view);
     		core_hud.view = core_hud.view
-    		  * (core.trackball_angle
-                      * Eigen::Scaling(0.1f * core.camera_base_zoom)
+    		  * (core.trackball_angle * Eigen::Scaling(1.2f)
     		  * Eigen::Translation3f(core.camera_translation
                   + core.camera_base_translation)).matrix();
     		core_hud.norm = core_hud.view.inverse().transpose();
@@ -510,19 +674,45 @@ int main(int argc, char **argv) {
     		  float fW = fH * (double)width/(double)height;
               igl::frustum(-fW, fW, -fH, fH, core.camera_dnear, core.camera_dfar, core_hud.proj);
     		}
-
-
-
-
-
-
-            //viewer.core(hud_view).view = viewer.core(main_view).view;
-            //viewer.core(hud_view).proj = viewer.core(main_view).proj;
-            //viewer.core(hud_view).norm = viewer.core(main_view).norm;
             return false;
         };
     viewer.callback_post_draw =
         [&](igl::opengl::glfw::Viewer &viewer) {
+            // detect sustained force stuff with mouse
+            if (VIEWER_SETTINGS.sustainedForceActive &&
+                viewer.down) {
+                auto &ar_parm = VIEWER_SETTINGS.arForceParameters;
+                int fid, vid;
+                Eigen::Vector3d pos;
+                Eigen::Vector3f bc;
+                if (CurrentMouseSurfPos(viewer, V, F, pos, fid, vid)) {
+                    Eigen::Vector3d vn;
+                    ar_parm.curr_surf_pos = pos;
+                    if (ar_parm.past_mouse_init) {
+                        ar_parm.curr_surf_vel =
+                            (ar_parm.curr_surf_pos - ar_parm.past_surf_pos) /
+                            ar_parm.time_step_size;
+                    }
+                    else {
+                        ar_parm.curr_surf_vel.setZero();
+                        ar_parm.past_mouse_init = true;
+                    }
+                    ar_parm.past_surf_pos = ar_parm.curr_surf_pos;
+                    vn = ar_parm.curr_surf_vel;
+                    if (vn.norm() > 1E-10)
+                        vn/=vn.norm();
+                    std::cout << "vn " << vn.norm() << std::endl;
+                    ForceMessage<double> force;
+                    GetModalForceVertex(N_modesAudible, modes, vid, vn, force);
+                    solver.enqueueForceMessage(force);
+                    VIEWER_SETTINGS.hitVidCache = vid;
+                    viewer.data().set_colors(C);
+                }
+                else {
+                    ar_parm.past_mouse_init = false;
+                }
+            }
+            // PA stuff
             if (!PA_STREAM_STARTED) {
                 CHECK_PA_LAUNCH(Pa_StartStream(stream));
                 PA_STREAM_STARTED = true;
@@ -539,7 +729,6 @@ int main(int argc, char **argv) {
             }
             return false;
         };
-
 
     viewer.launch();
     CHECK_PA_LAUNCH(Pa_StopStream(stream));

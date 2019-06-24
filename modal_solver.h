@@ -12,16 +12,26 @@
 #include "ffat_map_serialize.h"
 #include "forces.h"
 //##############################################################################
+template<typename T>
+struct DataMessage {
+    Eigen::Matrix<T,-1,1> data;
+};
+//##############################################################################
 template<typename T, int BUF_SIZE=FRAMES_PER_BUFFER>
 struct ForceMessage {
     Eigen::Matrix<T,-1,1> data;
     ForceType forceType = ForceType::PointForce;
     std::unique_ptr<Force<T,BUF_SIZE>> force;
+    // signal used to indicate start/stop of sustained forces
+    bool sustainedForceStart = false;
+    bool sustainedForceEnd = false;
     ForceMessage() = default;
     ForceMessage(const ForceMessage<T,BUF_SIZE> &tar)
         : data(tar.data),
           forceType(tar.forceType),
-          force(new PointForce<T,BUF_SIZE>()){
+          force(new PointForce<T,BUF_SIZE>()),
+          sustainedForceStart(tar.sustainedForceStart),
+          sustainedForceEnd(tar.sustainedForceEnd) {
         _DeepCopyForce(tar);
     }
     ForceMessage<T,BUF_SIZE> &operator = (const ForceMessage<T,BUF_SIZE> &tar) {
@@ -30,6 +40,8 @@ struct ForceMessage {
         // perform a deep copy
         data = tar.data;
         forceType = tar.forceType;
+        sustainedForceStart = tar.sustainedForceStart;
+        sustainedForceEnd = tar.sustainedForceEnd;
         _DeepCopyForce(tar);
         return *this;
     }
@@ -81,10 +93,13 @@ private:
     moodycamel::ReaderWriterQueue<ForceMessage<T, BUF_SIZE>> _queue_force;
     moodycamel::ReaderWriterQueue<SoundMessage<T, BUF_SIZE>> _queue_sound;
     moodycamel::ReaderWriterQueue<TransMessage<T>>           _queue_trans;
+    moodycamel::ReaderWriterQueue<DataMessage<T>>            _queue_qnorm;
+    moodycamel::ReaderWriterQueue<AutoregressiveForceParam<T>> _queue_arprm;
     SoundMessage<T, BUF_SIZE> _mess_sound;
     ForceMessage<T, BUF_SIZE> _mess_force; // buffer used to dequeue
     TransMessage<T>           _mess_trans; // buffer used to compute and enqueue
     TransMessage<T>           _latest_transfer;
+    DataMessage<T>            _mess_qnorm;
     ModalIntegrator<T> *_integrator = nullptr;
     const int _N_modes;
     std::unique_ptr<std::map<int,FFAT_Map>> _ffat_maps;
@@ -95,18 +110,22 @@ private:
     std::mutex _useTransferMutex;
     bool _useTransfer;
     bool _useTransferCache;
+    bool _sustainedForces = false;
 
 public:
     explicit ModalSolver(const int N_modes)
         : _queue_force(512),
           _queue_sound(2),
           _queue_trans(1),
+          _queue_qnorm(2),
+          _queue_arprm(1),
           _mess_trans(N_modes),
           _latest_transfer(N_modes),
           _N_modes(N_modes),
           _useTransfer(true),
           _useTransferCache(true) {
         _forceSpreadBufferSpace.resize(_N_modes);
+        _mess_qnorm.data.setZero(_N_modes);
     }
     inline void setIntegrator(ModalIntegrator<T> *integrator) {
         _integrator = integrator;
@@ -119,20 +138,26 @@ public:
         _useTransfer = s;
         _useTransferMutex.unlock();
     }
+    inline Eigen::Matrix<T,-1,1> getQBufferNorm() {
+        DataMessage<T> mess;
+        if (_queue_qnorm.try_dequeue(mess)) {
+            return mess.data;
+        }
+        return Eigen::Matrix<T,-1,1>::Zero(_N_modes);
+    }
 
     void step();
     void readFFATMaps(const std::string &mapFolderPath);
     bool computeTransfer(const Eigen::Matrix<T,3,1> &pos);
-    bool computeTransfer(const Eigen::Matrix<T,3,1> &pos, TransMessage<T> &t);
+    bool computeTransfer(const Eigen::Matrix<T,3,1> &pos, T *trans);
     bool enqueueForceMessage(const ForceMessage<T, BUF_SIZE> &mess);
     bool dequeueForceMessage(ForceMessage<T, BUF_SIZE> &mess);
     bool enqueueSoundMessage(const SoundMessage<T, BUF_SIZE> &mess);
     bool dequeueSoundMessage(SoundMessage<T, BUF_SIZE> &mess);
     bool enqueueTransMessage(const TransMessage<T> &mess);
     bool dequeueTransMessage(TransMessage<T> &mess);
-    const SoundMessage<T, BUF_SIZE> *peekSoundQueue() {
-        return _queue_sound.peek();
-    }
+    bool enqueueArprmMessage(const AutoregressiveForceParam<T> &mess);
+    bool dequeueArprmMessage(AutoregressiveForceParam<T> &mess);
 };
 //##############################################################################
 template<typename T, int BUF_SIZE>
@@ -140,29 +165,57 @@ void ModalSolver<T, BUF_SIZE>::step(){
     // fetch one force message and process it, then step the ode in buffer
     bool success = dequeueForceMessage(_mess_force);
     if (success) {
-        _activeForces.push_back(_mess_force);
-    }
-
-    // TODO get spread out force here
-    _forceSpreadBufferTime.setZero();
-    _forceSpreadBufferSpace.setZero();
-    auto it = _activeForces.begin();
-    while (it != _activeForces.end()) {
-        assert(it->force && "obsolete forces should be removed");
-        bool added = it->force->Add(_forceSpreadBufferTime);
-        // if force not producing anymore, kill it.
-        if (!added) {
-            _activeForces.erase(it++);
+        if (_mess_force.sustainedForceStart) {
+            _activeForces.clear();
+            _sustainedForces = true;
+            _activeForces.push_back(_mess_force);
+        }
+        if (!_sustainedForces) {
+            _activeForces.push_back(_mess_force);
         } else {
-            _forceSpreadBufferSpace += it->data;
-            ++it;
+            // copy sustained force data over
+            _activeForces.begin()->data = _mess_force.data;
+        }
+        if (_mess_force.sustainedForceEnd) {
+            _activeForces.clear();
+            _sustainedForces = false;
         }
     }
-    //if (_mess_force.force) {
-    //    _mess_force.force->Add(_forceSpreadBuffer);
-    //} else {
-    //    _forceSpreadBuffer.setZero();
-    //}
+    _forceSpreadBufferTime.setZero();
+    if (!_sustainedForces) {
+        _forceSpreadBufferSpace.setZero();
+        auto it = _activeForces.begin();
+        while (it != _activeForces.end()) {
+            assert(it->force && "obsolete forces should be removed");
+            bool added = it->force->Add(_forceSpreadBufferTime);
+            // if force not producing anymore, kill it.
+            if (!added) {
+                _activeForces.erase(it++);
+            } else {
+                _forceSpreadBufferSpace += it->data;
+                ++it;
+            }
+        }
+    }
+    else {
+        assert(_activeForces.size() == 1 &&
+            "Should only have 1 concurrent sustained force");
+        auto it = _activeForces.begin();
+        if (it->forceType == ForceType::AutoregressiveForce) {
+            // check for new AR parameters
+            AutoregressiveForceParam<T> arprm;
+            if (dequeueArprmMessage(arprm)) {
+                std::cout << "dequeued:\n";
+                std::cout << " a = " << arprm.a[0] << ", " << arprm.a[1] << std::endl;
+                std::cout << " sigma = " << arprm.sigma << std::endl;
+                std::cout << " mu = " << arprm.mu << std::endl;
+                static_cast<AutoregressiveForce<T,BUF_SIZE>*>(
+                    it->force.get())->SetParam(arprm);
+            }
+        }
+        it->force->Add(_forceSpreadBufferTime);
+        _forceSpreadBufferSpace = it->data;
+    }
 
     TransMessage<T> trans;
     bool useTransfer = _useTransferCache;
@@ -180,25 +233,22 @@ void ModalSolver<T, BUF_SIZE>::step(){
     }
     _useTransferCache = useTransfer;
 
-    //if (!success) { // use zero force
-    //    for (int ii=0; ii<BUF_SIZE; ++ii) {
-    //        const Eigen::Matrix<T,-1,1> &q =
-    //            _integrator->Step();
-    //        _mess_sound.data(ii) =
-    //            q.head(_latest_transfer.data.size()).dot(_latest_transfer.data);
-    //    }
-    //} else {
-        assert(_forceSpreadBufferSpace.size() == _N_modes &&
-               "dimension of force message incorrect");
-        for (int ii=0; ii<BUF_SIZE; ++ii) {
-            const Eigen::Matrix<T,-1,1> &q =
-                _integrator->Step(
+    assert(_forceSpreadBufferSpace.size() == _N_modes &&
+            "dimension of force message incorrect");
+
+    // get log power of the sound buffer for each mode
+    _mess_qnorm.data.setZero(_N_modes);
+    for (int ii=0; ii<BUF_SIZE; ++ii) {
+        const Eigen::Matrix<T,-1,1> &q =
+            _integrator->Step(
                     _forceSpreadBufferSpace*_forceSpreadBufferTime(ii));
-            _mess_sound.data(ii) =
-                q.head(_latest_transfer.data.size()).dot(
+        _mess_sound.data(ii) =
+            q.head(_latest_transfer.data.size()).dot(
                     _latest_transfer.data);
-        }
-    //}
+        _mess_qnorm.data.array() += q.array().square();
+    }
+    _mess_qnorm.data.array() = _mess_qnorm.data.array().sqrt();
+    _queue_qnorm.try_enqueue(_mess_qnorm); // it's okay to fail this one
     // keep trying to enqueue until successful
     while (true) {
         success = enqueueSoundMessage(_mess_sound);
@@ -218,25 +268,31 @@ void ModalSolver<T, BUF_SIZE>::readFFATMaps(const std::string &mapPath) {
 //##############################################################################
 template<typename T, int BUF_SIZE>
 bool ModalSolver<T, BUF_SIZE>::computeTransfer(
-    const Eigen::Matrix<T,3,1> &pos,
-    TransMessage<T> &trans) {
+    const Eigen::Matrix<T,3,1> &pos) {
     // if no transfer maps are given, return immediately (and use all ones)
     if (!_ffat_maps)
         return false;
+    auto &trans = _mess_trans;
     const int N = trans.data.size();
     for (int ii=0; ii<N; ++ii) {
         trans.data(ii) = std::abs(
             _ffat_maps->at(ii).GetMapVal(pos, trans.useCompressed));
     }
-    return true;
+    const bool success = enqueueTransMessage(_mess_trans);
+    return success;
 }
 //##############################################################################
 template<typename T, int BUF_SIZE>
 bool ModalSolver<T, BUF_SIZE>::computeTransfer(
-    const Eigen::Matrix<T,3,1> &pos) {
-    bool success = computeTransfer(pos, _mess_trans);
-    if (!success || !enqueueTransMessage(_mess_trans)) {
+    const Eigen::Matrix<T,3,1> &pos,
+    T *trans) {
+    // if no transfer maps are given, return immediately (and use all ones)
+    if (!_ffat_maps)
         return false;
+    const int N = _ffat_maps->size();
+    for (int ii=0; ii<N; ++ii) {
+        trans[ii] = std::abs(
+            _ffat_maps->at(ii).GetMapVal(pos, _mess_trans.useCompressed));
     }
     return true;
 }
@@ -275,6 +331,18 @@ template<typename T, int BUF_SIZE>
 bool ModalSolver<T, BUF_SIZE>::dequeueTransMessage(
     TransMessage<T> &mess) {
     return _queue_trans.try_dequeue(mess);
+}
+//##############################################################################
+template<typename T, int BUF_SIZE>
+bool ModalSolver<T, BUF_SIZE>::enqueueArprmMessage(
+    const AutoregressiveForceParam<T> &mess) {
+    return _queue_arprm.try_enqueue(mess);
+}
+//##############################################################################
+template<typename T, int BUF_SIZE>
+bool ModalSolver<T, BUF_SIZE>::dequeueArprmMessage(
+    AutoregressiveForceParam<T> &mess) {
+    return _queue_arprm.try_dequeue(mess);
 }
 //##############################################################################
 #endif
