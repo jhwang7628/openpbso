@@ -25,13 +25,17 @@ struct ForceMessage {
     // signal used to indicate start/stop of sustained forces
     bool sustainedForceStart = false;
     bool sustainedForceEnd = false;
-    ForceMessage() = default;
+    bool clearAllForces = false;
+    ForceMessage()
+        : force(new PointForce<T,BUF_SIZE>()) {
+    }
     ForceMessage(const ForceMessage<T,BUF_SIZE> &tar)
         : data(tar.data),
           forceType(tar.forceType),
           force(new PointForce<T,BUF_SIZE>()),
           sustainedForceStart(tar.sustainedForceStart),
-          sustainedForceEnd(tar.sustainedForceEnd) {
+          sustainedForceEnd(tar.sustainedForceEnd),
+          clearAllForces(tar.clearAllForces) {
         _DeepCopyForce(tar);
     }
     ForceMessage<T,BUF_SIZE> &operator = (const ForceMessage<T,BUF_SIZE> &tar) {
@@ -42,6 +46,7 @@ struct ForceMessage {
         forceType = tar.forceType;
         sustainedForceStart = tar.sustainedForceStart;
         sustainedForceEnd = tar.sustainedForceEnd;
+        clearAllForces = tar.clearAllForces;
         _DeepCopyForce(tar);
         return *this;
     }
@@ -150,6 +155,8 @@ public:
     void readFFATMaps(const std::string &mapFolderPath);
     bool computeTransfer(const Eigen::Matrix<T,3,1> &pos);
     bool computeTransfer(const Eigen::Matrix<T,3,1> &pos, T *trans);
+    bool enqueueForceMessageNoFail(const ForceMessage<T, BUF_SIZE> &mess, const
+        int maxIte = -1);
     bool enqueueForceMessage(const ForceMessage<T, BUF_SIZE> &mess);
     bool dequeueForceMessage(ForceMessage<T, BUF_SIZE> &mess);
     bool enqueueSoundMessage(const SoundMessage<T, BUF_SIZE> &mess);
@@ -157,6 +164,8 @@ public:
     bool enqueueTransMessage(const TransMessage<T> &mess);
     bool dequeueTransMessage(TransMessage<T> &mess);
     bool enqueueArprmMessage(const AutoregressiveForceParam<T> &mess);
+    bool enqueueArprmMessageNoFail(const AutoregressiveForceParam<T> &mess, const
+        int maxIte = -1);
     bool dequeueArprmMessage(AutoregressiveForceParam<T> &mess);
 };
 //##############################################################################
@@ -165,6 +174,10 @@ void ModalSolver<T, BUF_SIZE>::step(){
     // fetch one force message and process it, then step the ode in buffer
     bool success = dequeueForceMessage(_mess_force);
     if (success) {
+        if (_mess_force.clearAllForces) {
+            _activeForces.clear();
+            return;
+        }
         if (_mess_force.sustainedForceStart) {
             _activeForces.clear();
             _sustainedForces = true;
@@ -298,6 +311,18 @@ bool ModalSolver<T, BUF_SIZE>::computeTransfer(
 }
 //##############################################################################
 template<typename T, int BUF_SIZE>
+bool ModalSolver<T, BUF_SIZE>::enqueueForceMessageNoFail(
+    const ForceMessage<T, BUF_SIZE> &mess, const int maxIte){
+    int ite=0;
+    while (maxIte < 0 || ite++ < maxIte) {
+        if (_queue_force.try_enqueue(mess)) {
+            return true;
+        }
+    }
+    return false;
+}
+//##############################################################################
+template<typename T, int BUF_SIZE>
 bool ModalSolver<T, BUF_SIZE>::enqueueForceMessage(
     const ForceMessage<T, BUF_SIZE> &mess){
     return _queue_force.try_enqueue(mess);
@@ -337,6 +362,18 @@ template<typename T, int BUF_SIZE>
 bool ModalSolver<T, BUF_SIZE>::enqueueArprmMessage(
     const AutoregressiveForceParam<T> &mess) {
     return _queue_arprm.try_enqueue(mess);
+}
+//##############################################################################
+template<typename T, int BUF_SIZE>
+bool ModalSolver<T, BUF_SIZE>::enqueueArprmMessageNoFail(
+    const AutoregressiveForceParam<T> &mess, const int maxIte) {
+    int ite=0;
+    while (maxIte < 0 || ite++ < maxIte) {
+        if (_queue_arprm.try_enqueue(mess)) {
+            return true;
+        }
+    }
+    return false;
 }
 //##############################################################################
 template<typename T, int BUF_SIZE>

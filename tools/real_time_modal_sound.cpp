@@ -63,6 +63,8 @@ struct ViewerSettings {
     void incrementBufferHealthPtr() {
         bufferHealthPtr = (bufferHealthPtr+1)%100;
     }
+    int force_type_int=0;
+    int old_force_type_int=0;
     static ForceType forceType;
     struct GaussianForceParameters {
         float timeScale;
@@ -95,24 +97,22 @@ bool CurrentMouseSurfPos(
     igl::opengl::glfw::Viewer &viewer,
     const Eigen::MatrixXd &V,
     const Eigen::MatrixXi &F,
-    Eigen::Vector3d &pos, int &fid, int &vid) {
+    Eigen::Vector3d &pos, Eigen::Vector3d &coord, int &fid, int &vid) {
     const double x = viewer.current_mouse_x;
     const double y = viewer.core().viewport(3) - viewer.current_mouse_y;
-    Eigen::Vector3f bc;
     if(igl::unproject_onto_mesh(
         Eigen::Vector2f(x,y), viewer.core().view,
-        viewer.core().proj, viewer.core().viewport, V, F, fid, bc)) {
+        viewer.core().proj, viewer.core().viewport, V, F, fid, coord)) {
         vid = F(fid, 0);
-        float lar = bc[0];
-        if (bc[1] > bc[0]) {
+        float lar = coord[0];
+        if (coord[1] > coord[0]) {
             vid = F(fid, 1);
-            lar = bc[1];
+            lar = coord[1];
         }
-        if (bc[2] > lar) vid = F(fid, 2);
-        pos = V.row(F(fid,0))*bc[0]
-            + V.row(F(fid,1))*bc[1]
-            + V.row(F(fid,2))*bc[2];
-        vid = 0; // FIXME debug // TODO interp the vid
+        if (coord[2] > lar) vid = F(fid, 2);
+        pos = V.row(F(fid,0))*coord[0]
+            + V.row(F(fid,1))*coord[1]
+            + V.row(F(fid,2))*coord[2];
         return true;
     }
     return false;
@@ -151,11 +151,43 @@ void StepSolver(ModalSolver<T> &solver) {
 }
 //##############################################################################
 template<typename T>
-void GetModalForceVertex(
+void GetModalForceCopy(
     const ForceMessage<T> &cache,
     ForceMessage<T> &force) {
     // perform a deep copy
     force = cache;
+    force.forceType = VIEWER_SETTINGS.forceType;
+    if (force.forceType == ForceType::PointForce) {
+        force.force.reset(new PointForce<T>());
+    }
+    else if (force.forceType == ForceType::GaussianForce) {
+        force.force.reset(new GaussianForce<T>(
+                    VIEWER_SETTINGS.gaussianForceParameters.timeScale));
+    }
+    else if (force.forceType == ForceType::AutoregressiveForce) {
+        force.force.reset(new AutoregressiveForce<T>());
+    }
+    else {
+        assert(false && "Force type not defined");
+    }
+}
+//##############################################################################
+template<typename T>
+void GetModalForceFace(
+    const int forceDim,
+    const ModeData<T> &modes,
+    const Eigen::Vector3i vids,
+    const Eigen::Vector3d coords,
+    const Eigen::Vector3d &vn, // NOTE: using the same vn for all three vids
+    ForceMessage<double> &force) {
+    force.data.setZero(forceDim);
+    for (int mm=0; mm<forceDim; ++mm) {
+        for (int jj=0; jj<3; ++jj) {
+            force.data(mm) += vn[0]*modes.mode(mm).at(vids[jj]*3+0)*coords[jj]
+                            + vn[1]*modes.mode(mm).at(vids[jj]*3+1)*coords[jj]
+                            + vn[2]*modes.mode(mm).at(vids[jj]*3+2)*coords[jj];
+        }
+    }
     force.forceType = VIEWER_SETTINGS.forceType;
     if (force.forceType == ForceType::PointForce) {
         force.force.reset(new PointForce<T>());
@@ -303,10 +335,10 @@ int main(int argc, char **argv) {
             igl::opengl::glfw::Viewer& viewer, int, int modifier)->bool {
             int fid, vid;
             Eigen::Vector3f bc;
-            Eigen::Vector3d vn, pos;
+            Eigen::Vector3d vn, pos, coord;
             // Cast a ray in the view direction starting from the mouse
             // position
-            if (CurrentMouseSurfPos(viewer, V, F, pos, fid, vid)) {
+            if (CurrentMouseSurfPos(viewer, V, F, pos, coord, fid, vid)) {
                 VIEWER_SETTINGS.arForceParameters.curr_surf_pos = pos;
                 if (modifier == GLFW_MOD_SHIFT) {
                     VIEWER_SETTINGS.activeFaceIds.push_back(
@@ -334,11 +366,7 @@ int main(int argc, char **argv) {
         ForceMessage<double> force;
         GetModalForceVertex(N_modesAudible, modes, 0,
             ar_parm.curr_surf_vel, force);
-        while (true) {
-            if (solver.enqueueForceMessage(force)) {
-                break;
-            }
-        }
+        solver.enqueueForceMessageNoFail(force);
         return false;
     };
     viewer.callback_mouse_move = [&](
@@ -411,23 +439,29 @@ int main(int argc, char **argv) {
             ImGui::Text("Impact Force Control:");
             ImGui::BeginChild(
                 "option",
-                ImVec2(220, 140),
+                ImVec2(220, 220),
                 true);
             if (ImGui::Button("Repeat hit")) {
                 ForceMessage<double> force;
-                GetModalForceVertex(VIEWER_SETTINGS.hitForceCache, force);
+                GetModalForceCopy(VIEWER_SETTINGS.hitForceCache, force);
                 solver.enqueueForceMessage(force);
                 VIEWER_SETTINGS.activeFaceIds.push_back(
                     {VIEWER_SETTINGS.hitFidCache,
                     std::chrono::high_resolution_clock::now()});
             }
-            static int force_type = 0;
-            static int old_force_type = 0;
-            ImGui::RadioButton("Point force", &force_type, 0);
-            ImGui::RadioButton("Gaussian force", &force_type, 1);
-            ImGui::RadioButton("Autoregressive force", &force_type, 2);
-            VIEWER_SETTINGS.forceType = static_cast<ForceType>(force_type);
-            if (force_type == 2) {
+            ImGui::SameLine();
+            if (ImGui::Button("Clear force")) {
+                if (!VIEWER_SETTINGS.sustainedForceActive) {
+                    ForceMessage<double> force;
+                    force.clearAllForces = true;
+                    solver.enqueueForceMessageNoFail(force);
+                }
+            }
+            ImGui::RadioButton("Point force", &VIEWER_SETTINGS.force_type_int, 0);
+            ImGui::RadioButton("Gaussian force", &VIEWER_SETTINGS.force_type_int, 1);
+            ImGui::RadioButton("Autoregressive force", &VIEWER_SETTINGS.force_type_int, 2);
+            VIEWER_SETTINGS.forceType = static_cast<ForceType>(VIEWER_SETTINGS.force_type_int);
+            if (VIEWER_SETTINGS.force_type_int == 2) {
                 if (!VIEWER_SETTINGS.sustainedForceActive) {
                     VIEWER_SETTINGS.sustainedForceActive = true;
                     // send a dummy start signal
@@ -435,15 +469,10 @@ int main(int argc, char **argv) {
                     force.sustainedForceStart = true;
                     GetModalForceVertex(
                         N_modesAudible, modes, 0, Eigen::Vector3d::Zero(), force);
-                    while (true) {
-                        bool succ = solver.enqueueForceMessage(force);
-                        if (succ) {
-                            break;
-                        }
-                    }
+                    solver.enqueueForceMessageNoFail(force);
                 }
             } else {
-                if (old_force_type == 2 &&
+                if (VIEWER_SETTINGS.old_force_type_int == 2 &&
                     VIEWER_SETTINGS.sustainedForceActive) {
                     // send a dummy end signal
                     ForceMessage<double> force;
@@ -451,16 +480,11 @@ int main(int argc, char **argv) {
                     GetModalForceVertex(
                         N_modesAudible, modes, 0, Eigen::Vector3d::Zero(),
                         force);
-                    while (true) {
-                        bool succ = solver.enqueueForceMessage(force);
-                        if (succ) {
-                            break;
-                        }
-                    }
+                    solver.enqueueForceMessageNoFail(force);
                 }
                 VIEWER_SETTINGS.sustainedForceActive = false;
             }
-            old_force_type = force_type;
+            VIEWER_SETTINGS.old_force_type_int = VIEWER_SETTINGS.force_type_int;
             // gaussian force parameters
             if (VIEWER_SETTINGS.forceType != ForceType::GaussianForce) {
                 ImGui::PushStyleVar(
@@ -495,12 +519,7 @@ int main(int argc, char **argv) {
                 ar.arprm.mu = (double)ar.mu_f;
                 ar.arprm.a = {(double)ar.a_f[0], (double)ar.a_f[1]};
                 ar.arprm.sigma = (double)ar.sigma_f;
-                while (true) {
-                    if (solver.enqueueArprmMessage(ar.arprm)) {
-                        std::cout << "enqueue arprm\n";
-                        break;
-                    }
-                }
+                solver.enqueueArprmMessageNoFail(ar.arprm);
             }
             if (VIEWER_SETTINGS.forceType != ForceType::AutoregressiveForce) {
                 ImGui::PopStyleVar();
@@ -544,8 +563,9 @@ int main(int argc, char **argv) {
             ImGui::EndChild();
             ImGui::BeginChild(
                 "TransferVis",
-                ImVec2(220, 60),
+                ImVec2(220, 80),
                 true);
+            ImGui::Text("Ball visualization parameters:");
             ImGui::DragFloat("norma val",
                     &VIEWER_SETTINGS.transferBallNormalization,
                     0.01, 0.001, 10.0);
@@ -676,16 +696,30 @@ int main(int argc, char **argv) {
     		}
             return false;
         };
-    viewer.callback_post_draw =
-        [&](igl::opengl::glfw::Viewer &viewer) {
+    viewer.callback_key_down = [&](
+        igl::opengl::glfw::Viewer &viewer, unsigned int key, int mod)->bool {
+        if (key=='1') {
+            VIEWER_SETTINGS.force_type_int = 0;
+        }
+        else if (key=='2') {
+            VIEWER_SETTINGS.force_type_int = 1;
+        }
+        else if (key=='3') {
+            VIEWER_SETTINGS.force_type_int = 2;
+        }
+        return false;
+    };
+    viewer.callback_post_draw = [&](
+        igl::opengl::glfw::Viewer &viewer) {
             // detect sustained force stuff with mouse
             if (VIEWER_SETTINGS.sustainedForceActive &&
                 viewer.down) {
                 auto &ar_parm = VIEWER_SETTINGS.arForceParameters;
                 int fid, vid;
-                Eigen::Vector3d pos;
-                Eigen::Vector3f bc;
-                if (CurrentMouseSurfPos(viewer, V, F, pos, fid, vid)) {
+                Eigen::Vector3d pos, coords;
+                Eigen::Vector3i vids;
+                if (CurrentMouseSurfPos(viewer, V, F, pos, coords, fid, vid)) {
+                    vids = F.row(fid);
                     Eigen::Vector3d vn;
                     ar_parm.curr_surf_pos = pos;
                     if (ar_parm.past_mouse_init) {
@@ -701,9 +735,9 @@ int main(int argc, char **argv) {
                     vn = ar_parm.curr_surf_vel;
                     if (vn.norm() > 1E-10)
                         vn/=vn.norm();
-                    std::cout << "vn " << vn.norm() << std::endl;
                     ForceMessage<double> force;
-                    GetModalForceVertex(N_modesAudible, modes, vid, vn, force);
+                    GetModalForceFace(N_modesAudible, modes, vids, coords, vn,
+                        force);
                     solver.enqueueForceMessage(force);
                     VIEWER_SETTINGS.hitVidCache = vid;
                     viewer.data().set_colors(C);
