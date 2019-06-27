@@ -8,6 +8,7 @@ option(LIBIGL_WITH_OPENGL            "Use OpenGL"         ON)
 option(LIBIGL_WITH_OPENGL_GLFW       "Use GLFW"           ON)
 option(LIBIGL_WITH_VIEWER            "Use OpenGL viewer"  ON)
 option(LIBIGL_WITH_OPENGL_GLFW_IMGUI "Use Imgui"          ON)
+option(LIBIGL_WITH_PNG               "Use PNG"            ON)
 
 # FIXME hack for not using the default /usr/local .. path
 set(Protobuf_SRC_ROOT_FOLDER /Users/jui-hsien/code/modal_demo/external)
@@ -30,6 +31,7 @@ foreach(TOOL_NAME ${TOOLS})
         igl::core
         igl::opengl_glfw
         igl::opengl_glfw_imgui
+        igl::png
         ${PORTAUDIO_LIBRARIES}
         ${Protobuf_LIBRARIES})
 endforeach()

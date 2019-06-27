@@ -11,7 +11,10 @@
 #include "igl/opengl/glfw/Viewer.h"
 #include "igl/opengl/glfw/imgui/ImGuiMenu.h"
 #include "igl/opengl/glfw/imgui/ImGuiHelpers.h"
+#include "igl/opengl/create_shader_program.h"
+#include "igl/opengl/destroy_shader_program.h"
 #include "igl/colormap.h"
+#include "igl/png/readPNG.h"
 #include "imgui/imgui.h"
 #include "config.h"
 #include "ModalMaterial.h"
@@ -41,6 +44,8 @@ cli::Parser *CreateParser(int argc, char **argv) {
         "modal material file");
     parser->set_optional<std::string>("p", "ffat_map", FILE_NOT_EXIST,
         "ffat map folder that contains *.fatcube files");
+    parser->set_optional<std::string>("tex", "obj_texture_map", FILE_NOT_EXIST,
+        "texture map used in matcaps shader program");
     parser->run_and_exit_if_error();
     return parser;
 }
@@ -80,6 +85,9 @@ struct ViewerSettings {
         float sigma_f = 0.00148;
         AutoregressiveForceParam<double> arprm;
     } arForceParameters;
+
+    // loading new model stuff
+    bool loadingNewModel = false;
 } VIEWER_SETTINGS;
 float ViewerSettings::renderFaceTime = 1.5f;
 ForceType ViewerSettings::forceType = ForceType::PointForce;
@@ -276,11 +284,13 @@ int main(int argc, char **argv) {
         N_modesAudible);
     solver.setIntegrator(integrator);
     VIEWER_SETTINGS.hitForceCache.data.setZero(N_modesAudible);
-
     // start a simulation thread and use max priority
     std::thread threadSim([&solver](){
         while (true) {
             solver.step();
+            while (VIEWER_SETTINGS.loadingNewModel) {
+                std::cout << "pausing sim thread\n";
+            }
         }
     });
     sched_param sch_params;
@@ -310,6 +320,7 @@ int main(int argc, char **argv) {
     igl::opengl::glfw::Viewer viewer;
     viewer.core().is_animating = true;
     unsigned int main_view, hud_view;
+    int obj_id, sph_id;
     viewer.callback_init = [&](
             igl::opengl::glfw::Viewer &viewer) {
         viewer.core().viewport = Eigen::Vector4f(0, 0, 1280, 800);
@@ -317,8 +328,8 @@ int main(int argc, char **argv) {
         viewer.append_core(Eigen::Vector4f(800, 0, 480, 480));
         hud_view = viewer.core_list[1].id;
         viewer.core(hud_view).update_transform_matrices = false;
-        const int obj_id = viewer.data_list[0].id;
-        const int sph_id = viewer.data_list[1].id;
+        obj_id = viewer.data_list[0].id;
+        sph_id = viewer.data_list[1].id;
         viewer.data(sph_id).set_visible(false,main_view);
         viewer.data(obj_id).set_visible(false, hud_view);
         return false;
@@ -582,6 +593,7 @@ int main(int argc, char **argv) {
     viewer.data().set_colors(C);
     viewer.data().show_lines = false;
     viewer.data().set_face_based(true);
+
     // preparing for the HUD
     Eigen::MatrixXd V_ball, C_ball;
     Eigen::VectorXd transferVals;
@@ -590,7 +602,6 @@ int main(int argc, char **argv) {
     // should probably hard code the ball or use cmake to communicate the
     // base dir
     igl::read_triangle_mesh("../assets/ball.obj", V_ball, F_ball);
-
     viewer.append_mesh();
     viewer.data().set_mesh(V_ball, F_ball);
     viewer.data().show_lines = false;
@@ -764,7 +775,55 @@ int main(int argc, char **argv) {
             return false;
         };
 
-    viewer.launch();
+    if (parser->get<std::string>("tex") != FILE_NOT_EXIST) {
+        Eigen::Matrix<unsigned char,Eigen::Dynamic,Eigen::Dynamic> R,G,B,A;
+        igl::png::readPNG(parser->get<std::string>("tex"),R,G,B,A);
+        viewer.data().set_texture(R,G,B,A);
+        viewer.data(obj_id).set_face_based(false);
+        viewer.data(obj_id).show_lines = false;
+        viewer.data(obj_id).show_texture = true;
+        viewer.launch_init(true, false, "RT Modal Sound");
+        viewer.data(obj_id).meshgl.init();
+        igl::opengl::destroy_shader_program(
+            viewer.data(obj_id).meshgl.shader_mesh);
+
+        {
+            std::string mesh_vertex_shader_string =
+R"(#version 150
+uniform mat4 view;
+uniform mat4 proj;
+uniform mat4 normal_matrix;
+in vec3 position;
+in vec3 normal;
+out vec3 normal_eye;
+
+void main()
+{
+  normal_eye = normalize(vec3 (normal_matrix * vec4 (normal, 0.0)));
+  gl_Position = proj * view * vec4(position, 1.0);
+})";
+            std::string mesh_fragment_shader_string =
+R"(#version 150
+in vec3 normal_eye;
+out vec4 outColor;
+uniform sampler2D tex;
+void main()
+{
+  vec2 uv = normalize(normal_eye).xy * 0.5 + 0.5;
+  outColor = texture(tex, uv);
+})";
+            igl::opengl::create_shader_program(
+                mesh_vertex_shader_string,
+                mesh_fragment_shader_string,
+                {},
+                viewer.data(obj_id).meshgl.shader_mesh);
+        }
+        viewer.launch_rendering(true);
+        viewer.launch_shut();
+    }
+    else {
+        viewer.launch(true, false, "RT Modal Sound");
+    }
     CHECK_PA_LAUNCH(Pa_StopStream(stream));
     CHECK_PA_LAUNCH(Pa_CloseStream(stream));
     CHECK_PA_LAUNCH(Pa_Terminate());
