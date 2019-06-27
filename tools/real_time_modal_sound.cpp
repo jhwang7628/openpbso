@@ -88,6 +88,7 @@ struct ViewerSettings {
 
     // loading new model stuff
     bool loadingNewModel = false;
+    bool terminated = false;
 } VIEWER_SETTINGS;
 float ViewerSettings::renderFaceTime = 1.5f;
 ForceType ViewerSettings::forceType = ForceType::PointForce;
@@ -286,10 +287,10 @@ int main(int argc, char **argv) {
     VIEWER_SETTINGS.hitForceCache.data.setZero(N_modesAudible);
     // start a simulation thread and use max priority
     std::thread threadSim([&solver](){
-        while (true) {
+        while (!VIEWER_SETTINGS.terminated) {
             solver.step();
             while (VIEWER_SETTINGS.loadingNewModel) {
-                std::cout << "pausing sim thread\n";
+                std::this_thread::sleep_for(std::chrono::seconds(1));
             }
         }
     });
@@ -718,6 +719,18 @@ int main(int argc, char **argv) {
         else if (key=='3') {
             VIEWER_SETTINGS.force_type_int = 2;
         }
+        else if (key=='T') {
+            // TODO test
+            std::string obj_file("../data/plate/plate.tet.obj");
+            std::string mod_file("../data/plate/plate_surf.modes");
+            std::string mat_file("../data/plate/ceramics.txt");
+            std::string fat_file("../data/plate/ffat_maps_new");
+            std::string tex_file("../assets/matcaps/red.png");
+            VIEWER_SETTINGS.loadingNewModel = !VIEWER_SETTINGS.loadingNewModel;
+            viewer.load_mesh_from_file(obj_file.c_str());
+            //igl::read_triangle_mesh(obj_file.c_str(), V, F);
+            //viewer.data(obj_id).set_mesh(V, F);
+        }
         return false;
     };
     viewer.callback_post_draw = [&](
@@ -827,5 +840,7 @@ void main()
     CHECK_PA_LAUNCH(Pa_StopStream(stream));
     CHECK_PA_LAUNCH(Pa_CloseStream(stream));
     CHECK_PA_LAUNCH(Pa_Terminate());
+    VIEWER_SETTINGS.terminated = true;
+    threadSim.join();
 }
 //##############################################################################

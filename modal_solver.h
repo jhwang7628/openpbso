@@ -160,6 +160,8 @@ public:
     bool enqueueForceMessage(const ForceMessage<T, BUF_SIZE> &mess);
     bool dequeueForceMessage(ForceMessage<T, BUF_SIZE> &mess);
     bool enqueueSoundMessage(const SoundMessage<T, BUF_SIZE> &mess);
+    bool enqueueSoundMessageNoFail(const SoundMessage<T, BUF_SIZE> &mess, const
+        int maxIte = -1);
     bool dequeueSoundMessage(SoundMessage<T, BUF_SIZE> &mess);
     bool enqueueTransMessage(const TransMessage<T> &mess);
     bool dequeueTransMessage(TransMessage<T> &mess);
@@ -263,12 +265,7 @@ void ModalSolver<T, BUF_SIZE>::step(){
     _mess_qnorm.data.array() = _mess_qnorm.data.array().sqrt();
     _queue_qnorm.try_enqueue(_mess_qnorm); // it's okay to fail this one
     // keep trying to enqueue until successful
-    while (true) {
-        success = enqueueSoundMessage(_mess_sound);
-        if (success) {
-            break;
-        }
-    }
+    enqueueSoundMessageNoFail(_mess_sound, 10);
 }
 //##############################################################################
 template<typename T, int BUF_SIZE>
@@ -338,6 +335,18 @@ template<typename T, int BUF_SIZE>
 bool ModalSolver<T, BUF_SIZE>::enqueueSoundMessage(
     const SoundMessage<T, BUF_SIZE> &mess){
     return _queue_sound.try_enqueue(mess);
+}
+//##############################################################################
+template<typename T, int BUF_SIZE>
+bool ModalSolver<T, BUF_SIZE>::enqueueSoundMessageNoFail(
+    const SoundMessage<T, BUF_SIZE> &mess, const int maxIte){
+    int ite = 0;
+    while (maxIte < 0 || ite++ < maxIte) {
+        if (_queue_sound.try_enqueue(mess)) {
+            return true;
+        }
+    }
+    return false;
 }
 //##############################################################################
 template<typename T, int BUF_SIZE>
