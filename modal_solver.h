@@ -105,7 +105,7 @@ private:
     TransMessage<T>           _mess_trans; // buffer used to compute and enqueue
     TransMessage<T>           _latest_transfer;
     DataMessage<T>            _mess_qnorm;
-    ModalIntegrator<T> *_integrator = nullptr;
+    std::shared_ptr<ModalIntegrator<T>> _integrator;
     const int _N_modes;
     std::unique_ptr<std::map<int,FFAT_Map>> _ffat_maps;
     std::list<ForceMessage<T, BUF_SIZE>> _activeForces;
@@ -132,7 +132,7 @@ public:
         _forceSpreadBufferSpace.resize(_N_modes);
         _mess_qnorm.data.setZero(_N_modes);
     }
-    inline void setIntegrator(ModalIntegrator<T> *integrator) {
+    inline void setIntegrator(std::shared_ptr<ModalIntegrator<T>> integrator) {
         _integrator = integrator;
     }
     inline const TransMessage<T> &getLatestTransfer() {
@@ -265,7 +265,7 @@ void ModalSolver<T, BUF_SIZE>::step(){
     _mess_qnorm.data.array() = _mess_qnorm.data.array().sqrt();
     _queue_qnorm.try_enqueue(_mess_qnorm); // it's okay to fail this one
     // keep trying to enqueue until successful
-    enqueueSoundMessageNoFail(_mess_sound, 10);
+    enqueueSoundMessageNoFail(_mess_sound, -1);
 }
 //##############################################################################
 template<typename T, int BUF_SIZE>

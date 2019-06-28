@@ -1,4 +1,4 @@
-build
+build*
 data
 *.pb.cc
 *.pb.h
