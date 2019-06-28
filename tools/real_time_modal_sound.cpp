@@ -152,12 +152,6 @@ int PaModalCallback(const void *inputBuffer,
     }
     return 0;
 }
-template<typename T>
-void StepSolver(ModalSolver<T> &solver) {
-    while (true) {
-        solver.step();
-    }
-}
 //##############################################################################
 template<typename T>
 void GetModalForceCopy(
@@ -287,11 +281,12 @@ int main(int argc, char **argv) {
     VIEWER_SETTINGS.hitForceCache.data.setZero(N_modesAudible);
     // start a simulation thread and use max priority
     std::thread threadSim([&solver](){
-        while (!VIEWER_SETTINGS.terminated) {
+        //while (!VIEWER_SETTINGS.terminated) {
+        while (true) {
             solver.step();
-            while (VIEWER_SETTINGS.loadingNewModel) {
-                std::this_thread::sleep_for(std::chrono::seconds(1));
-            }
+            //while (VIEWER_SETTINGS.loadingNewModel) {
+            //    std::this_thread::sleep_for(std::chrono::seconds(1));
+            //}
         }
     });
     sched_param sch_params;
@@ -726,10 +721,12 @@ int main(int argc, char **argv) {
             std::string mat_file("../data/plate/ceramics.txt");
             std::string fat_file("../data/plate/ffat_maps_new");
             std::string tex_file("../assets/matcaps/red.png");
-            VIEWER_SETTINGS.loadingNewModel = !VIEWER_SETTINGS.loadingNewModel;
+            VIEWER_SETTINGS.loadingNewModel = true;
             viewer.load_mesh_from_file(obj_file.c_str());
-            //igl::read_triangle_mesh(obj_file.c_str(), V, F);
-            //viewer.data(obj_id).set_mesh(V, F);
+            igl::read_triangle_mesh(obj_file.c_str(), V, F);
+            viewer.data(obj_id).clear();
+            viewer.data(obj_id).set_mesh(V, F);
+            VIEWER_SETTINGS.loadingNewModel = false;
         }
         return false;
     };
