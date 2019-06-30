@@ -296,6 +296,113 @@ ModalSolver<T> *BuildSolver(
     return solver;
 }
 //##############################################################################
+void LoadNewModel(
+    std::string &obj_file,
+    std::string &mod_file,
+    std::string &mat_file,
+    std::string &fat_path,
+    Eigen::MatrixXd &V,
+    Eigen::MatrixXd &VN,
+    Eigen::MatrixXi &F,
+    Eigen::MatrixXd &transfer_ball,
+    Eigen::MatrixXd &V_ball,
+    Eigen::MatrixXd &C_ball,
+    Eigen::VectorXd &transferVals,
+    Eigen::Vector3d &pos,
+    int &obj_id,
+    int &sph_id,
+    unsigned int &main_view,
+    unsigned int &hud_view,
+    int &N_modesAudible,
+    cli::Parser *parser,
+    Eigen::Matrix<unsigned char,-1,-1> &tex_R,
+    Eigen::Matrix<unsigned char,-1,-1> &tex_G,
+    Eigen::Matrix<unsigned char,-1,-1> &tex_B,
+    Eigen::Matrix<unsigned char,-1,-1> &tex_A,
+    igl::opengl::glfw::Viewer &viewer,
+    std::unique_ptr<ModalMaterial<double>> &material,
+    std::unique_ptr<ModeData<double>> &modes,
+    std::unique_ptr<ModalSolver<double>> &solver) {
+    std::string meta = igl::file_dialog_open();
+    std::cout << "loading new model " << meta << " ..." << std::flush;
+    if (meta.length() != 0) {
+        std::ifstream stream(meta.c_str());
+        std::string obj_file_tmp;
+        std::string mod_file_tmp;
+        std::string mat_file_tmp;
+        std::string fat_path_tmp;
+        std::getline(stream, obj_file_tmp);
+        std::getline(stream, mod_file_tmp);
+        std::getline(stream, mat_file_tmp);
+        std::getline(stream, fat_path_tmp);
+        if (Gpu_Wavesolver::IsFile(obj_file.c_str()) &&
+            Gpu_Wavesolver::IsFile(mod_file.c_str()) &&
+            Gpu_Wavesolver::IsFile(mat_file.c_str()) &&
+            Gpu_Wavesolver::IsFile(fat_path.c_str())) {
+            obj_file = obj_file_tmp;
+            mod_file = mod_file_tmp;
+            mat_file = mat_file_tmp;
+            fat_path = fat_path_tmp;
+            VIEWER_SETTINGS.loadingNewModel = true;
+            igl::read_triangle_mesh(obj_file.c_str(), V, F);
+            viewer.data(obj_id).clear();
+            viewer.append_mesh();
+            viewer.core(main_view).align_camera_center(V);
+            viewer.core(hud_view).align_camera_center(V);
+            obj_id = viewer.data().id;
+            viewer.data(obj_id).set_mesh(V, F);
+            if (VIEWER_SETTINGS.useTextures) {
+                igl::png::readPNG(
+                        parser->get<std::string>("tex"),
+                        tex_R,tex_G,tex_B,tex_A);
+                viewer.data(obj_id).set_texture(
+                        tex_R,tex_G,tex_B,tex_A);
+                viewer.data(obj_id).set_face_based(false);
+                viewer.data(obj_id).show_lines = false;
+                viewer.data(obj_id).show_texture = true;
+                viewer.data(obj_id).meshgl.init();
+                igl::opengl::destroy_shader_program(
+                        viewer.data(obj_id).meshgl.shader_mesh);
+                igl::opengl::create_shader_program(
+                        mesh_vertex_shader_string,
+                        mesh_fragment_shader_string,
+                        {},
+                        viewer.data(obj_id).meshgl.shader_mesh);
+            }
+            else {
+                viewer.data(obj_id).show_lines = false;
+                viewer.data(obj_id).set_face_based(true);
+            }
+            igl::per_vertex_normals(V, F, VN);
+            material.reset(ReadMaterial<double>(mat_file.c_str()));
+            modes.reset(ReadModes<double>(mod_file.c_str()));
+            solver.reset(
+                    BuildSolver(
+                        material,
+                        modes,
+                        fat_path,
+                        N_modesAudible
+                        )
+                    );
+            assert(modes->numDOF() == V.rows()*3 && "DOFs mismatch");
+            VIEWER_SETTINGS.Reinitialize();
+            transfer_ball.setZero(N_modesAudible, V_ball.rows());
+            for (int ii=0; ii<V_ball.rows(); ++ii) {
+                pos = V_ball.row(ii);
+                solver->computeTransfer(pos,
+                        transfer_ball.data()+ii*N_modesAudible);
+            }
+            transfer_ball /= transfer_ball.maxCoeff();
+            transferVals = Eigen::VectorXd::Ones(transferVals.size())*0.1;
+            igl::colormap(
+                    igl::COLOR_MAP_TYPE_JET,transferVals,true,C_ball);
+            viewer.data(sph_id).set_colors(C_ball);
+            VIEWER_SETTINGS.loadingNewModel = false;
+            std::cout << " OK\n" << std::flush;
+        }
+    }
+}
+//##############################################################################
 //##############################################################################
 int main(int argc, char **argv) {
     auto *parser = CreateParser(argc, argv);
@@ -357,7 +464,7 @@ int main(int argc, char **argv) {
     // Plot the mesh
     igl::opengl::glfw::Viewer viewer;
     viewer.core().is_animating = true;
-    unsigned int main_view, hud_view;
+    unsigned int main_view, hud_view, mode_view;
     int obj_id, sph_id;
     viewer.callback_init = [&](
             igl::opengl::glfw::Viewer &viewer) {
@@ -368,10 +475,14 @@ int main(int argc, char **argv) {
         viewer.append_core(Eigen::Vector4f(800, 0, 480, 480));
         hud_view = viewer.core_list[1].id;
         viewer.core(hud_view).update_transform_matrices = false;
+        viewer.append_core(Eigen::Vector4f(800, 480, 480, 480));
+        mode_view = viewer.core_list[2].id;
         obj_id = viewer.data_list[0].id;
         sph_id = viewer.data_list[1].id;
         viewer.data(sph_id).set_visible(false,main_view);
         viewer.data(obj_id).set_visible(false, hud_view);
+        viewer.data(sph_id).set_visible(false,mode_view);
+        //viewer.data(obj_id).set_visible(false,mode_view);
         return false;
     };
     viewer.callback_post_resize = [&](
@@ -445,84 +556,33 @@ int main(int argc, char **argv) {
             return str.substr(str.rfind(delim)+1);
         };
         if (ImGui::Button("Load Model")) {
-            std::string meta = igl::file_dialog_open();
-            std::cout << "loading new model " << meta << " ..." << std::flush;
-            if (meta.length() != 0) {
-                std::ifstream stream(meta.c_str());
-                std::string obj_file_tmp;
-                std::string mod_file_tmp;
-                std::string mat_file_tmp;
-                std::string fat_path_tmp;
-                std::getline(stream, obj_file_tmp);
-                std::getline(stream, mod_file_tmp);
-                std::getline(stream, mat_file_tmp);
-                std::getline(stream, fat_path_tmp);
-                if (Gpu_Wavesolver::IsFile(obj_file.c_str()) &&
-                    Gpu_Wavesolver::IsFile(mod_file.c_str()) &&
-                    Gpu_Wavesolver::IsFile(mat_file.c_str()) &&
-                    Gpu_Wavesolver::IsFile(fat_path.c_str())) {
-                    obj_file = obj_file_tmp;
-                    mod_file = mod_file_tmp;
-                    mat_file = mat_file_tmp;
-                    fat_path = fat_path_tmp;
-                    VIEWER_SETTINGS.loadingNewModel = true;
-                    igl::read_triangle_mesh(obj_file.c_str(), V, F);
-                    viewer.data(obj_id).clear();
-                    viewer.append_mesh();
-                    viewer.core(main_view).align_camera_center(V);
-                    viewer.core(hud_view).align_camera_center(V);
-                    obj_id = viewer.data().id;
-                    viewer.data(obj_id).set_mesh(V, F);
-                    if (VIEWER_SETTINGS.useTextures) {
-                        igl::png::readPNG(
-                            parser->get<std::string>("tex"),
-                            tex_R,tex_G,tex_B,tex_A);
-                        viewer.data(obj_id).set_texture(
-                            tex_R,tex_G,tex_B,tex_A);
-                        viewer.data(obj_id).set_face_based(false);
-                        viewer.data(obj_id).show_lines = false;
-                        viewer.data(obj_id).show_texture = true;
-                        viewer.data(obj_id).meshgl.init();
-                        igl::opengl::destroy_shader_program(
-                            viewer.data(obj_id).meshgl.shader_mesh);
-                        igl::opengl::create_shader_program(
-                                mesh_vertex_shader_string,
-                                mesh_fragment_shader_string,
-                                {},
-                                viewer.data(obj_id).meshgl.shader_mesh);
-                    }
-                    else {
-                        viewer.data(obj_id).show_lines = false;
-                        viewer.data(obj_id).set_face_based(true);
-                    }
-                    igl::per_vertex_normals(V, F, VN);
-                    material.reset(ReadMaterial<double>(mat_file.c_str()));
-                    modes.reset(ReadModes<double>(mod_file.c_str()));
-                    solver.reset(
-                        BuildSolver(
-                            material,
-                            modes,
-                            fat_path,
-                            N_modesAudible
-                        )
-                    );
-                    assert(modes->numDOF() == V.rows()*3 && "DOFs mismatch");
-                    VIEWER_SETTINGS.Reinitialize();
-                    transfer_ball.setZero(N_modesAudible, V_ball.rows());
-                    for (int ii=0; ii<V_ball.rows(); ++ii) {
-                        pos = V_ball.row(ii);
-                        solver->computeTransfer(pos,
-                            transfer_ball.data()+ii*N_modesAudible);
-                    }
-                    transfer_ball /= transfer_ball.maxCoeff();
-                    transferVals = Eigen::VectorXd::Ones(transferVals.size())*0.1;
-                    igl::colormap(
-                        igl::COLOR_MAP_TYPE_JET,transferVals,true,C_ball);
-                    viewer.data(sph_id).set_colors(C_ball);
-                    VIEWER_SETTINGS.loadingNewModel = false;
-                    std::cout << " OK\n" << std::flush;
-                }
-            }
+            LoadNewModel(
+                obj_file,
+                mod_file,
+                mat_file,
+                fat_path,
+                V,
+                VN,
+                F,
+                transfer_ball,
+                V_ball,
+                C_ball,
+                transferVals,
+                pos,
+                obj_id,
+                sph_id,
+                main_view,
+                hud_view,
+                N_modesAudible,
+                parser,
+                tex_R,
+                tex_G,
+                tex_B,
+                tex_A,
+                viewer,
+                material,
+                modes,
+                solver);
         }
         if (ImGui::CollapsingHeader("Info", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (ImGui::TreeNode("Geometry")) {
@@ -703,7 +763,6 @@ int main(int argc, char **argv) {
                     &VIEWER_SETTINGS.transferBallBufThres,
                     1., 1., 10000.);
             ImGui::EndChild();
-            ImGui::Text("this is the next line");
 		}
         ImGui::End();
     };
@@ -842,13 +901,43 @@ int main(int argc, char **argv) {
             VIEWER_SETTINGS.force_type_int = 2;
             used = true;
         }
-        else if (key=='u') {
+        else if (key=='u' || key=='U') {
             VIEWER_SETTINGS.useTextures = !VIEWER_SETTINGS.useTextures;
             viewer.data(obj_id).show_texture = VIEWER_SETTINGS.useTextures;
             viewer.data(obj_id).set_face_based(!VIEWER_SETTINGS.useTextures);
             used = true;
         }
+        else if (key=='r' || key=='R') {
+            LoadNewModel(
+                obj_file,
+                mod_file,
+                mat_file,
+                fat_path,
+                V,
+                VN,
+                F,
+                transfer_ball,
+                V_ball,
+                C_ball,
+                transferVals,
+                pos,
+                obj_id,
+                sph_id,
+                main_view,
+                hud_view,
+                N_modesAudible,
+                parser,
+                tex_R,
+                tex_G,
+                tex_B,
+                tex_A,
+                viewer,
+                material,
+                modes,
+                solver);
+        }
         else if (key=='s' || key=='S') {
+            // TODO
             {
                 std::cout << "here\n";
                 const Eigen::MatrixXd V= (Eigen::MatrixXd(8,3)<<
