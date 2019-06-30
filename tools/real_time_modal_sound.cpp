@@ -68,6 +68,8 @@ struct ViewerSettings {
     float transferBallBufThres = 200.;
     bool sustainedForceActive = false;
     bool useTextures = false;
+    bool drawModes = true;
+    int drawModeIdx = 0;
     void incrementBufferHealthPtr() {
         bufferHealthPtr = (bufferHealthPtr+1)%100;
     }
@@ -101,6 +103,36 @@ struct ViewerSettings {
         arForceParameters.past_mouse_init = false;
     }
 } VIEWER_SETTINGS;
+struct ModalViewer {
+    bool animate = false;
+    Eigen::MatrixXd *V0;
+    Eigen::MatrixXi *F0;
+    Eigen::MatrixXd V;
+    Eigen::MatrixXd Z;
+    Eigen::VectorXd Zv;
+    Eigen::MatrixXd C;
+    float scale = 0.0001;
+    float scale_exp = -4.f;
+    float time = 0.;
+    int ind = -1;
+    float zoom = 1.4f;
+    void UpdateModeShape(
+        const std::unique_ptr<ModeData<double>> &modes,
+        const int ind) {
+        if (this->ind != ind) {
+            const auto &mode = modes->mode(ind);
+            Z.resize(mode.size()/3, 3);
+            Zv.resize(mode.size()/3);
+            for (int ii=0; ii<mode.size()/3; ++ii) {
+                Z(ii,0) = mode.at(ii*3    );
+                Z(ii,1) = mode.at(ii*3 + 1);
+                Z(ii,2) = mode.at(ii*3 + 2);
+                Zv(ii) = Z.row(ii).norm();
+            }
+            this->ind = ind;
+        }
+    }
+} MODAL_VIEWER;
 float ViewerSettings::renderFaceTime = 1.5f;
 ForceType ViewerSettings::forceType = ForceType::PointForce;
 //##############################################################################
@@ -465,30 +497,38 @@ int main(int argc, char **argv) {
     igl::opengl::glfw::Viewer viewer;
     viewer.core().is_animating = true;
     unsigned int main_view, hud_view, mode_view;
-    int obj_id, sph_id;
+    int obj_id, sph_id, mod_id;
     viewer.callback_init = [&](
             igl::opengl::glfw::Viewer &viewer) {
         // initialize parameters in VIEWER_SETTINGS
         VIEWER_SETTINGS.hitForceCache.data.setZero(N_modesAudible);
         viewer.core().viewport = Eigen::Vector4f(0, 0, 1280, 800);
-        main_view = viewer.core_list[0].id;
         viewer.append_core(Eigen::Vector4f(800, 0, 480, 480));
+        viewer.append_core(Eigen::Vector4f(880, 200, 600, 600));
+        main_view = viewer.core_list[0].id;
         hud_view = viewer.core_list[1].id;
-        viewer.core(hud_view).update_transform_matrices = false;
-        viewer.append_core(Eigen::Vector4f(800, 480, 480, 480));
         mode_view = viewer.core_list[2].id;
+        viewer.core(hud_view).update_transform_matrices = false;
+        viewer.core(mode_view).update_transform_matrices = false;
         obj_id = viewer.data_list[0].id;
         sph_id = viewer.data_list[1].id;
+        mod_id = viewer.data_list[2].id;
+        viewer.data(mod_id).set_visible(false,main_view);
+        viewer.data(mod_id).set_visible(false, hud_view);
+        viewer.data(mod_id).set_visible(true, mode_view);
         viewer.data(sph_id).set_visible(false,main_view);
-        viewer.data(obj_id).set_visible(false, hud_view);
         viewer.data(sph_id).set_visible(false,mode_view);
-        //viewer.data(obj_id).set_visible(false,mode_view);
+        viewer.data(sph_id).set_visible(true, hud_view);
+        viewer.data(obj_id).set_visible(false, hud_view);
+        viewer.data(obj_id).set_visible(false,mode_view);
+        viewer.data(obj_id).set_visible(true, main_view);
         return false;
     };
     viewer.callback_post_resize = [&](
             igl::opengl::glfw::Viewer &v, int w, int h) {
         v.core(main_view).viewport = Eigen::Vector4f(0, 0, w, h);
         v.core(hud_view).viewport = Eigen::Vector4f(w-480, 0, 480, 480);
+        v.core(mode_view).viewport = Eigen::Vector4f(w-600, h-600, 600, 600);
         return true;
     };
     C = Eigen::MatrixXd::Constant(F.rows(),3,1);
@@ -751,11 +791,29 @@ int main(int argc, char **argv) {
                 solver->getLatestTransfer().data.size(),
                 0, nullptr, 0.0f, 1.0f, ImVec2(200, 80));
             ImGui::EndChild();
+		}
+		if (ImGui::CollapsingHeader(
+            "Visualization", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::BeginChild(
                 "TransferVis",
                 ImVec2(220, 80),
                 true);
-            ImGui::Text("Ball visualization parameters:");
+            auto &mv = MODAL_VIEWER;
+            if (ImGui::Button("Draw Modes")) {
+                VIEWER_SETTINGS.drawModes = !VIEWER_SETTINGS.drawModes;
+            }
+            ImGui::DragInt("Mode Idx", &(VIEWER_SETTINGS.drawModeIdx), 1.0f,
+                0, N_modesAudible);
+            if (ImGui::DragFloat("Scale Exponent", &(mv.scale_exp),0.2,-9,-3)) {
+                mv.scale = pow(10, mv.scale_exp);
+            }
+            ImGui::DragFloat("Zoom", &(mv.zoom),0.1,0.1,10.0,0);
+            ImGui::EndChild();
+            ImGui::BeginChild(
+                "TransferVis",
+                ImVec2(220, 80),
+                true);
+            ImGui::Text("\'Ball\' visualization parameters:");
             ImGui::DragFloat("norma val",
                     &VIEWER_SETTINGS.transferBallNormalization,
                     0.01, 0.001, 10.0);
@@ -763,7 +821,7 @@ int main(int argc, char **argv) {
                     &VIEWER_SETTINGS.transferBallBufThres,
                     1., 1., 10000.);
             ImGui::EndChild();
-		}
+        }
         ImGui::End();
     };
 
@@ -783,6 +841,17 @@ int main(int argc, char **argv) {
     viewer.data().set_face_based(true);
     viewer.data().set_colors(Eigen::RowVector3d(0,0,1));
     viewer.data().shininess = 500.0f;
+
+    // preparing for the modal viewer draw
+    viewer.append_mesh();
+    MODAL_VIEWER.V0 = &V;
+    MODAL_VIEWER.F0 = &F;
+
+    viewer.data().set_mesh(V, F);
+    viewer.data().show_lines = false;
+    viewer.data().set_face_based(true);
+    viewer.data().set_colors(Eigen::RowVector3d(0,1,0));
+
     viewer.selected_data_index = 0;
     // get transfer values on the ball
     transferVals.setOnes(V_ball.rows());
@@ -850,40 +919,67 @@ int main(int argc, char **argv) {
             }
             viewer.data(1).set_colors(C_ball);
             // handling the matrices myself
-            auto &core = viewer.core(main_view);
-            auto &core_hud = viewer.core(hud_view);
-    		core_hud.view = Eigen::Matrix4f::Identity();
-    		core_hud.proj = Eigen::Matrix4f::Identity();
-    		core_hud.norm = Eigen::Matrix4f::Identity();
+            for (int ii=0; ii<2; ++ii) {
+                auto &core = viewer.core(main_view);
+                auto &core_slave = ii == 0 ?
+                    viewer.core(hud_view) : viewer.core(mode_view);
+    		    core_slave.view = Eigen::Matrix4f::Identity();
+    		    core_slave.proj = Eigen::Matrix4f::Identity();
+    		    core_slave.norm = Eigen::Matrix4f::Identity();
 
-    		float width  = core_hud.viewport(2);
-    		float height = core_hud.viewport(3);
+    		    float width  = core_slave.viewport(2);
+    		    float height = core_slave.viewport(3);
 
-    		// Set view
-            igl::look_at(core.camera_eye, core.camera_center, core.camera_up,
-                    core_hud.view);
-    		core_hud.view = core_hud.view
-    		  * (core.trackball_angle * Eigen::Scaling(1.2f)
-    		  * Eigen::Translation3f(core.camera_translation
-                  + core.camera_base_translation)).matrix();
-    		core_hud.norm = core_hud.view.inverse().transpose();
+    		    // Set view
+                igl::look_at(core.camera_eye, core.camera_center,
+                    core.camera_up, core_slave.view);
+                if (ii==0) {
+    		        core_slave.view = core_slave.view
+    		          * (core.trackball_angle * Eigen::Scaling(1.2f)
+    		          * Eigen::Translation3f(core.camera_translation
+                          + core.camera_base_translation)).matrix();
+                } else {
+                    float zoom =
+                        core.camera_zoom*core.camera_base_zoom*
+                        MODAL_VIEWER.zoom;
+    		        core_slave.view = core_slave.view
+    		          * (core.trackball_angle * Eigen::Scaling(zoom)
+    		          * Eigen::Translation3f(core.camera_translation
+                          + core.camera_base_translation)).matrix();
+                }
+    		    core_slave.norm = core_slave.view.inverse().transpose();
 
-    		// Set projection
-    		if (core.orthographic)
-    		{
-    		  float length = (core.camera_eye - core.camera_center).norm();
-    		  float h = tan(core.camera_view_angle/360.0 * igl::PI) * (length);
-              igl::ortho(-h*width/height, h*width/height, -h, h,
-                      core.camera_dnear, core.camera_dfar,core_hud.proj);
-    		}
-    		else
-    		{
-              float fH = tan(core.camera_view_angle / 360.0 * igl::PI) *
-                  core.camera_dnear;
-    		  float fW = fH * (double)width/(double)height;
-              igl::frustum(-fW, fW, -fH, fH, core.camera_dnear,
-                      core.camera_dfar, core_hud.proj);
-    		}
+    		    // Set projection
+    		    if (core.orthographic)
+    		    {
+    		      float length = (core.camera_eye - core.camera_center).norm();
+    		      float h = tan(core.camera_view_angle/360.0 * igl::PI)*length;
+                  igl::ortho(-h*width/height, h*width/height, -h, h,
+                          core.camera_dnear, core.camera_dfar,core_slave.proj);
+    		    }
+    		    else
+    		    {
+                  float fH = tan(core.camera_view_angle / 360.0 * igl::PI) *
+                      core.camera_dnear;
+    		      float fW = fH * (double)width/(double)height;
+                  igl::frustum(-fW, fW, -fH, fH, core.camera_dnear,
+                          core.camera_dfar, core_slave.proj);
+    		    }
+            }
+            // update mode viewer
+            viewer.data(mod_id).set_visible(
+                VIEWER_SETTINGS.drawModes, mode_view);
+            if (VIEWER_SETTINGS.drawModes) {
+                auto &mv = MODAL_VIEWER;
+                mv.UpdateModeShape(modes, VIEWER_SETTINGS.drawModeIdx);
+                const double tmp = sqrt(modes->omegaSquared(mv.ind)/2000.);
+                mv.V = *(mv.V0) +
+                    mv.Z*mv.scale*cos(tmp*mv.time);
+                mv.time += 1./(tmp/(2.*3.14159))/24.;
+                igl::colormap(igl::COLOR_MAP_TYPE_PARULA,mv.Zv,true,mv.C);
+                viewer.data(mod_id).set_mesh(mv.V, *(mv.F0));
+                viewer.data(mod_id).set_colors(mv.C);
+            }
             return false;
         };
     viewer.callback_key_down = [&](
