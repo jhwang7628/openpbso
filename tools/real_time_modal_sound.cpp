@@ -68,7 +68,7 @@ struct ViewerSettings {
     float transferBallBufThres = 200.;
     bool sustainedForceActive = false;
     bool useTextures = false;
-    bool drawModes = true;
+    bool drawModes = false;
     int drawModeIdx = 0;
     void incrementBufferHealthPtr() {
         bufferHealthPtr = (bufferHealthPtr+1)%100;
@@ -982,7 +982,7 @@ int main(int argc, char **argv) {
             }
             return false;
         };
-    viewer.callback_key_down = [&](
+    viewer.callback_key_pressed = [&](
         igl::opengl::glfw::Viewer &viewer, unsigned int key, int mod)->bool {
         bool used = false;
         if (key=='1') {
@@ -995,6 +995,16 @@ int main(int argc, char **argv) {
         }
         else if (key=='3') {
             VIEWER_SETTINGS.force_type_int = 2;
+            used = true;
+        }
+        else if (key==']') {
+            VIEWER_SETTINGS.drawModeIdx =
+                std::min(VIEWER_SETTINGS.drawModeIdx+1, N_modesAudible-1);
+            used = true;
+        }
+        else if (key=='[') {
+            VIEWER_SETTINGS.drawModeIdx =
+                std::max(VIEWER_SETTINGS.drawModeIdx-1, 0);
             used = true;
         }
         else if (key=='u' || key=='U') {
@@ -1031,38 +1041,7 @@ int main(int argc, char **argv) {
                 material,
                 modes,
                 solver);
-        }
-        else if (key=='s' || key=='S') {
-            // TODO
-            {
-                std::cout << "here\n";
-                const Eigen::MatrixXd V= (Eigen::MatrixXd(8,3)<<
-                  0.0,0.0,0.0,
-                  0.0,0.0,1.0,
-                  0.0,1.0,0.0,
-                  0.0,1.0,1.0,
-                  1.0,0.0,0.0,
-                  1.0,0.0,1.0,
-                  1.0,1.0,0.0,
-                  1.0,1.0,1.0).finished();
-                const Eigen::MatrixXi F = (Eigen::MatrixXi(12,3)<<
-                  1,7,5,
-                  1,3,7,
-                  1,4,3,
-                  1,2,4,
-                  3,8,7,
-                  3,4,8,
-                  5,7,8,
-                  5,8,6,
-                  1,5,6,
-                  1,6,2,
-                  2,6,8,
-                  2,8,4).finished().array()-1;
-                igl::opengl::glfw::Viewer v;
-                v.data().set_mesh(V,F);
-                v.data().set_face_based(true);
-                v.launch();
-            };
+            used = true;
         }
         return used;
     };
