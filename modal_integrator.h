@@ -36,7 +36,7 @@ class ModalIntegrator {
         const ModalVec &Step(const ModalVec &Q);
         const ModalVec &Step();
 };
-
+//##############################################################################
 template<typename T>
 ModalIntegrator<T> *ModalIntegrator<T>::Build(const T density,
                                               const std::vector<T> omegaSquared,
@@ -61,7 +61,7 @@ ModalIntegrator<T> *ModalIntegrator<T>::Build(const T density,
     ModalIntegrator<T> *integrator = new ModalIntegrator<T>(N, h, a, b);
     return integrator;
 }
-
+//##############################################################################
 template<typename T>
 ModalIntegrator<T>::ModalIntegrator(const int N, const T h,
                                     const ModalVec &a, const ModalVec &b)
@@ -92,7 +92,7 @@ ModalIntegrator<T>::ModalIntegrator(const int N, const T h,
         _c3(ii) *= 1E9; // arbitrary scaling
     }
 }
-
+//##############################################################################
 template<typename T>
 const typename ModalIntegrator<T>::ModalVec &ModalIntegrator<T>::Step(const ModalVec &Q) {
     ModalVec &q_k         = _q.at((_q_curr_ptr+1)%3);
@@ -104,7 +104,7 @@ const typename ModalIntegrator<T>::ModalVec &ModalIntegrator<T>::Step(const Moda
     _q_curr_ptr = (_q_curr_ptr + 1)%3;
     return q_k;
 }
-
+//##############################################################################
 template<typename T>
 const typename ModalIntegrator<T>::ModalVec &ModalIntegrator<T>::Step() {
     ModalVec &q_k         = _q.at((_q_curr_ptr+1)%3);
