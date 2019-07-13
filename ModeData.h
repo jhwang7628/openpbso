@@ -113,19 +113,25 @@ void ModeData<REAL>::printAllFrequency(const REAL &density) const
 template<typename REAL>
 int ModeData<REAL>::numModesAudible(
     const REAL &density, const REAL &audibleFreq) {
+    // use cache
     if (density == _densityCache &&
         _freqThresCache == audibleFreq &&
         _N_modesAudible >= 0) {
         return _N_modesAudible;
     }
-    if (_omegaSquared.size() == 0) {
+    auto Freq = [&](const REAL os)->REAL {
+        return sqrt(os/density)/(2.*M_PI);
+    };
+    if (_omegaSquared.size() == 0 || Freq(_omegaSquared.at(0)) > audibleFreq) {
         return 0;
     }
-    int ii=0;
-    for (ii=0; ii<=_omegaSquared.size(); ++ii) {
-        if (ii<_omegaSquared.size() &&
-            sqrt(_omegaSquared.at(ii)/density)/(2.*M_PI) > audibleFreq) {
-                break;
+    if (Freq(_omegaSquared.at(_omegaSquared.size()-1)) <= audibleFreq) {
+        return _omegaSquared.size();
+    }
+    int ii;
+    for (ii=0; ii<_omegaSquared.size(); ++ii) {
+        if (Freq(_omegaSquared.at(ii)) > audibleFreq) {
+            break;
         }
     }
     _N_modesAudible = ii;

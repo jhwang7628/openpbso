@@ -5,6 +5,8 @@
 #include <string>
 #include <deque>
 #include <chrono>
+#include <mutex>
+#include <condition_variable>
 #include "igl/read_triangle_mesh.h"
 #include "igl/unproject_onto_mesh.h"
 #include "igl/per_vertex_normals.h"
@@ -93,6 +95,8 @@ struct ViewerSettings {
 
     // loading new model stuff
     bool loadingNewModel = false;
+    std::condition_variable cvLoadingNewModel;
+    std::mutex mutexLoadingNewModel;
     bool terminated = false;
     void Reinitialize() {
         activeFaceIds.clear();
@@ -375,6 +379,8 @@ void LoadNewModel(
             mod_file = mod_file_tmp;
             mat_file = mat_file_tmp;
             fat_path = fat_path_tmp;
+            std::unique_lock<std::mutex> lockLoad(
+                VIEWER_SETTINGS.mutexLoadingNewModel);
             VIEWER_SETTINGS.loadingNewModel = true;
             igl::read_triangle_mesh(obj_file.c_str(), V, F);
             viewer.data(obj_id).clear();
@@ -430,6 +436,7 @@ void LoadNewModel(
                     igl::COLOR_MAP_TYPE_JET,transferVals,true,C_ball);
             viewer.data(sph_id).set_colors(C_ball);
             VIEWER_SETTINGS.loadingNewModel = false;
+            VIEWER_SETTINGS.cvLoadingNewModel.notify_all();
             std::cout << " OK\n" << std::flush;
         }
     }
@@ -470,8 +477,10 @@ int main(int argc, char **argv) {
     std::thread threadSim([&](){
         while (!VIEWER_SETTINGS.terminated) {
             solver->step();
+            std::unique_lock<std::mutex> lockLoad(
+                VIEWER_SETTINGS.mutexLoadingNewModel);
             while (VIEWER_SETTINGS.loadingNewModel) {
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+                VIEWER_SETTINGS.cvLoadingNewModel.wait(lockLoad);
             }
         }
     });
