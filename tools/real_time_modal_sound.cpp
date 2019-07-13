@@ -66,7 +66,7 @@ struct ViewerSettings {
     int hitFidCache = 0;
     int hitVidCache = 0;
     bool newHit = false;
-    float transferBallNormalization = 0.15;
+    float transferBallNormalization = 0.45;
     float transferBallBufThres = 200.;
     bool sustainedForceActive = false;
     bool useTextures = false;
@@ -109,14 +109,14 @@ struct ViewerSettings {
 } VIEWER_SETTINGS;
 struct ModalViewer {
     bool animate = false;
-    Eigen::MatrixXd *V0;
-    Eigen::MatrixXi *F0;
+    Eigen::MatrixXd V0;
+    Eigen::MatrixXi F0;
     Eigen::MatrixXd V;
     Eigen::MatrixXd Z;
     Eigen::VectorXd Zv;
     Eigen::MatrixXd C;
     float scale = 0.0001;
-    float scale_exp = -4.f;
+    float scale_exp = -5.f;
     float time = 0.;
     int ind = -1;
     float zoom = 1.4f;
@@ -347,6 +347,7 @@ void LoadNewModel(
     Eigen::Vector3d &pos,
     int &obj_id,
     int &sph_id,
+    int &mod_id,
     unsigned int &main_view,
     unsigned int &hud_view,
     int &N_modesAudible,
@@ -363,6 +364,7 @@ void LoadNewModel(
     std::cout << "loading new model " << meta << " ..." << std::flush;
     if (meta.length() != 0) {
         std::ifstream stream(meta.c_str());
+        if (!stream) return;
         std::string obj_file_tmp;
         std::string mod_file_tmp;
         std::string mat_file_tmp;
@@ -388,7 +390,13 @@ void LoadNewModel(
             viewer.core(main_view).align_camera_center(V);
             viewer.core(hud_view).align_camera_center(V);
             obj_id = viewer.data().id;
+            viewer.data(obj_id).clear();
+            viewer.data(mod_id).clear();
             viewer.data(obj_id).set_mesh(V, F);
+            viewer.data(mod_id).set_mesh(V, F);
+            MODAL_VIEWER.V0 = V;
+            MODAL_VIEWER.F0 = F;
+            MODAL_VIEWER.ind = -1;
             if (VIEWER_SETTINGS.useTextures) {
                 igl::png::readPNG(
                         parser->get<std::string>("tex"),
@@ -620,6 +628,7 @@ int main(int argc, char **argv) {
                 pos,
                 obj_id,
                 sph_id,
+                mod_id,
                 main_view,
                 hud_view,
                 N_modesAudible,
@@ -853,8 +862,8 @@ int main(int argc, char **argv) {
 
     // preparing for the modal viewer draw
     viewer.append_mesh();
-    MODAL_VIEWER.V0 = &V;
-    MODAL_VIEWER.F0 = &F;
+    MODAL_VIEWER.V0 = V;
+    MODAL_VIEWER.F0 = F;
 
     viewer.data().set_mesh(V, F);
     viewer.data().show_lines = false;
@@ -978,15 +987,19 @@ int main(int argc, char **argv) {
             // update mode viewer
             viewer.data(mod_id).set_visible(
                 VIEWER_SETTINGS.drawModes, mode_view);
+            std::unique_lock<std::mutex> lockLoad(
+                VIEWER_SETTINGS.mutexLoadingNewModel);
+            while (VIEWER_SETTINGS.loadingNewModel) {
+                VIEWER_SETTINGS.cvLoadingNewModel.wait(lockLoad);
+            }
             if (VIEWER_SETTINGS.drawModes) {
                 auto &mv = MODAL_VIEWER;
                 mv.UpdateModeShape(modes, VIEWER_SETTINGS.drawModeIdx);
                 const double tmp = sqrt(modes->omegaSquared(mv.ind)/2000.);
-                mv.V = *(mv.V0) +
-                    mv.Z*mv.scale*cos(tmp*mv.time);
+                mv.V = mv.V0 + mv.Z*mv.scale*cos(tmp*mv.time);
                 mv.time += 1./(tmp/(2.*3.14159))/24.;
                 igl::colormap(igl::COLOR_MAP_TYPE_PARULA,mv.Zv,true,mv.C);
-                viewer.data(mod_id).set_mesh(mv.V, *(mv.F0));
+                viewer.data(mod_id).set_mesh(mv.V, mv.F0);
                 viewer.data(mod_id).set_colors(mv.C);
             }
             return false;
@@ -1038,6 +1051,7 @@ int main(int argc, char **argv) {
                 pos,
                 obj_id,
                 sph_id,
+                mod_id,
                 main_view,
                 hud_view,
                 N_modesAudible,
