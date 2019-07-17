@@ -361,8 +361,19 @@ void LoadNewModel(
     std::unique_ptr<ModeData<double>> &modes,
     std::unique_ptr<ModalSolver<double>> &solver) {
     std::string meta = igl::file_dialog_open();
-    std::cout << "loading new model " << meta << " ..." << std::flush;
     if (meta.length() != 0) {
+        if (meta.substr(meta.size()-4, 4) == ".png") {
+            const size_t last_slash = meta.find_last_of('/');
+            if (last_slash == std::string::npos || last_slash == meta.size()-1) {
+                return;
+            }
+            std::string prefix = meta.substr(0, last_slash);
+            std::string suffix = meta.substr(last_slash+1, meta.size());
+            std::cout << "prefix, suffix = " << prefix << " " << suffix << std::endl;
+            prefix = prefix.substr(0, prefix.find_last_of('/'));
+            meta = prefix + "/" + suffix.substr(0, suffix.size()-4) + ".meta";
+        }
+        std::cout << "loading new model " << meta << " ..." << std::flush;
         std::ifstream stream(meta.c_str());
         if (!stream) return;
         std::string obj_file_tmp;
@@ -1065,6 +1076,14 @@ int main(int argc, char **argv) {
                 modes,
                 solver);
             used = true;
+        }
+        else if (key=='d' || key=='D') {
+            ForceMessage<double> force;
+            GetModalForceCopy(VIEWER_SETTINGS.hitForceCache, force);
+            solver->enqueueForceMessage(force);
+            VIEWER_SETTINGS.activeFaceIds.push_back(
+                    {VIEWER_SETTINGS.hitFidCache,
+                    std::chrono::high_resolution_clock::now()});
         }
         return used;
     };
