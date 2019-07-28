@@ -55,6 +55,7 @@ cli::Parser *CreateParser(int argc, char **argv) {
 }
 //##############################################################################
 struct ViewerSettings {
+    float volume = 1.0;
     bool useTransfer = true;
     bool useTransferCache = true;
     float bufferHealth[100] = {1.0f};
@@ -115,8 +116,8 @@ struct ModalViewer {
     Eigen::MatrixXd Z;
     Eigen::VectorXd Zv;
     Eigen::MatrixXd C;
-    float scale = 0.0001;
-    float scale_exp = -5.f;
+    float scale = 1.E-6;
+    float scale_exp = -6.0f;
     float time = 0.;
     int ind = -1;
     float zoom = 1.4f;
@@ -314,6 +315,8 @@ ModalSolver<T> *BuildSolver(
         double maxFreq;
         iss >> maxFreq;
         N_modesAudible = modes->numModesAudible(material->density, maxFreq);
+    } else { // set default frequency to 20kHz
+        N_modesAudible = modes->numModesAudible(material->density, 20000.);
     }
     // build integrator and then set it for solver
     ModalSolver<T> *solver = new ModalSolver<T>(N_modesAudible);
@@ -803,7 +806,7 @@ int main(int argc, char **argv) {
                 transfer.data.array().abs().maxCoeff();
             ImGui::BeginChild(
                 "histogram",
-                ImVec2(220, 145),
+                ImVec2(220, 160),
                 true);
             ImGui::Checkbox(
                 "Enable FFAT transfer", &VIEWER_SETTINGS.useTransfer);
