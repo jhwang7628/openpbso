@@ -301,12 +301,13 @@ namespace cli {
 			return false;
 		}
 
-		void enable_help() {
+		void enable_help(const char *default_msg=nullptr) {
+            const char *display_msg = (default_msg ? default_msg : "");
 			set_callback("h", "help", std::function<bool(CallbackArgs&)>([this](CallbackArgs& args){
 				args.output << this->usage();
 				exit(0);
 				return false;
-			}), "", true);
+			}), display_msg, true);
 		}
 
 		void disable_help() {

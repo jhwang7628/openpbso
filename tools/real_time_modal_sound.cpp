@@ -40,13 +40,21 @@ static bool PA_STREAM_STARTED = false;
 //##############################################################################
 cli::Parser *CreateParser(int argc, char **argv) {
     cli::Parser *parser = new cli::Parser(argc, argv);
-    parser->set_required<std::string>("m", "mesh",
+    // hack to rewrite the help command
+    parser->disable_help();
+    parser->enable_help("**Usage:\n      Either input \"d\" and \"name\", or specify full path to \"m\", \"s\", \"t\", and \"p\".");
+    //parser->enable_help();
+    parser->set_optional<std::string>("d", "data_dir", FILE_NOT_EXIST,
+        "Data directory that contains the model");
+    parser->set_optional<std::string>("name", "obj_name", FILE_NOT_EXIST,
+        "Data object prefix name. e.g., wine");
+    parser->set_optional<std::string>("m", "mesh", FILE_NOT_EXIST,
         "Triangle mesh for the object");
-    parser->set_required<std::string>("s", "surf_mode",
+    parser->set_optional<std::string>("s", "surf_mode", FILE_NOT_EXIST,
         "surface modes file");
-    parser->set_required<std::string>("t", "material",
+    parser->set_optional<std::string>("t", "material", FILE_NOT_EXIST,
         "modal material file");
-    parser->set_required<std::string>("p", "ffat_map",
+    parser->set_optional<std::string>("p", "ffat_map", FILE_NOT_EXIST,
         "ffat map folder that contains *.fatcube files");
     parser->set_optional<std::string>("tex", "obj_texture_map", FILE_NOT_EXIST,
         "texture map used in matcaps shader program");
@@ -467,10 +475,23 @@ void LoadNewModel(
 //##############################################################################
 int main(int argc, char **argv) {
     auto *parser = CreateParser(argc, argv);
-    std::string obj_file(parser->get<std::string>("m"));
-    std::string mod_file(parser->get<std::string>("s"));
-    std::string mat_file(parser->get<std::string>("t"));
-    std::string fat_path(parser->get<std::string>("p"));
+    std::string obj_file, mod_file, mat_file, fat_path;
+    if (parser->get<std::string>("d") != FILE_NOT_EXIST) {
+        // fixed directory structure
+        const std::string d = parser->get<std::string>("d");
+        const std::string n = parser->get<std::string>("name");
+        assert(parser->get<std::string>("name") != FILE_NOT_EXIST &&
+            "need to supply name field if have \"d\" option on");
+        obj_file = d + "/" + n + ".tet.obj";
+        mod_file = d + "/" + n + "_surf.modes";
+        mat_file = d + "/" + n + "_material.txt";
+        fat_path = d + "/" + n + "_ffat_maps";
+    } else {
+        obj_file = parser->get<std::string>("m");
+        mod_file = parser->get<std::string>("s");
+        mat_file = parser->get<std::string>("t");
+        fat_path = parser->get<std::string>("p");
+    }
     // read geometry
     Eigen::MatrixXd V, C, VN, V_ball, C_ball, transfer_ball;
     Eigen::MatrixXi F, F_ball;
