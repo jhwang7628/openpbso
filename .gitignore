@@ -3,3 +3,4 @@ data
 *.pb.cc
 *.pb.h
 assets
+/frontend

@@ -1,7 +1,8 @@
-# Real-time Modal Sound Demo
+# openpbso - An open-source library for physics-based sound
 
-This is a demo written for our KleinPAT paper. It runs modal sound synthesis in
-real-time.
+openpbso is a C++ open-source library for physics-based sound. We provide
+functionalities to synthesize rigid-body sound models such as those built by the
+[KleinPAT algorithm](https://graphics.stanford.edu/projects/kleinpat/) (*KleinPAT preprocessing tools not included*).
 
 ## Dependencies
 
@@ -39,8 +40,8 @@ buffer compiler at the root directory:
 
 ## Required runtime data
 
-The synthesizer uses preprocessed data to run the modal sound synthesis. You
-will need the following data files.
+The modal sound synthesizer uses preprocessed data to run the modal sound
+synthesis. You will need the following data files.
 * .obj file
 * surface modes file
 * modal material txt file
@@ -63,5 +64,4 @@ Alternatively, you can also specify each required files/folder:
 ## Known issues
 
 #### `fatal error: 'google/protobuf/port_def.inc' file not found`
-This is likely due to older protoc version. Please try to upgrade the protocol
-buffer.
+This is likely due to older protoc version. Please try to upgrade the protocol buffer.
