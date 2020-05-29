@@ -11,7 +11,7 @@ option(LIBIGL_WITH_OPENGL_GLFW_IMGUI "Use Imgui"          ON)
 option(LIBIGL_WITH_PNG               "Use PNG"            ON)
 
 # FIXME hack for not using the default /usr/local .. path
-set(Protobuf_SRC_ROOT_FOLDER /Users/jui-hsien/code/modal_demo/external)
+set(Protobuf_SRC_ROOT_FOLDER /Users/juiwang/code/modal_demo/external)
 
 find_package(LIBIGL REQUIRED QUIET)
 find_package(Portaudio REQUIRED)

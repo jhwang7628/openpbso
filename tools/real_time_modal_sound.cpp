@@ -24,6 +24,7 @@
 #include "ModeData.h"
 #include "cmd_parser.h"
 #include "portaudio.h"
+#include "io.h"
 #include "modal_integrator.h"
 #include "modal_solver.h"
 #include "forces.h"
@@ -479,9 +480,15 @@ int main(int argc, char **argv) {
     if (parser->get<std::string>("d") != FILE_NOT_EXIST) {
         // fixed directory structure
         const std::string d = parser->get<std::string>("d");
-        const std::string n = parser->get<std::string>("name");
-        assert(parser->get<std::string>("name") != FILE_NOT_EXIST &&
-            "need to supply name field if have \"d\" option on");
+        std::vector<std::string> filenames;
+        Gpu_Wavesolver::ListDirFiles(d.c_str(), filenames, ".tet.obj");
+        std::string parse_name = Gpu_Wavesolver::Basename(filenames.at(0));
+        parse_name = parse_name.substr(0, parse_name.find_first_of("."));
+        std::string n = parser->get<std::string>("name");
+        if (parser->get<std::string>("name") == FILE_NOT_EXIST) {
+            n = parse_name;
+        }
+        std::cout << "object name: " << n << std::endl;
         obj_file = d + "/" + n + ".tet.obj";
         mod_file = d + "/" + n + "_surf.modes";
         mat_file = d + "/" + n + "_material.txt";

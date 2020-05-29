@@ -19,6 +19,7 @@ namespace Gpu_Wavesolver {
 void ListDirFiles(const char *dirname, std::vector<std::string> &names,
     const char *contains=nullptr);
 bool IsFile(const char *filename);
+std::string Basename(const std::string &path);
 //##############################################################################
 template<typename T_i, typename T_o>
 void ReadComplexVector(
