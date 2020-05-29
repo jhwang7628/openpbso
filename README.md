@@ -16,7 +16,7 @@ Below is a list of dependencies along with the version that are tested:
 
 We recommend you to install libigl using git via:
 
-    git clone https://github.com/libigl/libigl.git
+    git clone https://github.com/jhwang7628/libigl.git
     cd libigl/
     git submodule update --init --recursive
     cd ..
@@ -54,8 +54,8 @@ like the examples we provided, you can simply run
 
     ./real_time_modal_sound_bin -d <data_folder> -name <obj_name>
 
-An example of `<obj_name>` would be `wine`. `<data_folder>` is where the
-.obj file can be located.
+An example of `<obj_name>` would be `wine`. The `name` flag is optional.
+`<data_folder>` is where the .obj file can be located.
 
 Alternatively, you can also specify each required files/folder:
 
