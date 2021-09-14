@@ -16,6 +16,7 @@ Below is a list of dependencies along with the version that are tested:
 
 We recommend you to install libigl using git via:
 
+    cd external
     git clone https://github.com/jhwang7628/libigl.git
     cd libigl/
     git submodule update --init --recursive
